@@ -3,7 +3,31 @@ import { chmod, lstat, mkdir, open, readFile, readdir, rename, rm, rmdir, unlink
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve as resolvePath } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { spawnSync } from 'node:child_process'
+import {
+  COMMAND_TIMEOUT_MS,
+  INVOCATION_DEADLINE_MS,
+  MAX_OUTPUT_BYTES,
+  MAX_U64,
+  observeSequence,
+  runHerdr,
+  sanitizeToken
+} from './runtime-helpers.mjs'
+import {
+  clearWorkspaceMetadata,
+  observeSnapshot,
+  reconcileWorkspaces,
+  validateEventSnapshot
+} from './workspace-metadata.mjs'
+
+export {
+  COMMAND_TIMEOUT_MS,
+  INVOCATION_DEADLINE_MS,
+  MAX_OUTPUT_BYTES,
+  MAX_U64,
+  observeSequence,
+  runHerdr,
+  sanitizeToken
+} from './runtime-helpers.mjs'
 
 export const SOURCE = 'mahiro-herdr-sidebar.usage'
 export const FRESH_MS = 5 * 60 * 1000
@@ -22,15 +46,11 @@ const OWNER = 'mahiro-herdr-sidebar'
 const MAX_CACHE_BYTES = 64 * 1024
 const MAX_EVENT_BYTES = 64 * 1024
 const MAX_ID_CHARS = 128
-const MAX_OUTPUT_BYTES = 256 * 1024
-const COMMAND_TIMEOUT_MS = 5 * 1000
-const INVOCATION_DEADLINE_MS = 30 * 1000
 const FRESHNESS_MARGIN_MS = 5 * 1000
 const RESET_MARGIN_MS = 5 * 1000
 const DELIVERY_HEADROOM_MS = 1000
 const MIN_TIMESTAMP = Date.UTC(2020, 0, 1)
 const MAX_RESET_AHEAD_MS = 370 * 24 * 60 * 60 * 1000
-const MAX_U64 = (1n << 64n) - 1n
 const EVENT_NAMES = new Set([
   'pane_focused',
   'pane_agent_detected',
@@ -413,14 +433,6 @@ export async function restoreCapturedConfigState(captured, env = process.env) {
   })
 }
 
-export function sanitizeToken(value) {
-  const clean = String(value)
-    .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/gu, ' ')
-    .replace(/\s+/gu, ' ')
-    .trim()
-  return Array.from(clean).slice(0, 80).join('')
-}
-
 export async function readUsageCache(path, clock = Date.now) {
   let handle
   try {
@@ -513,12 +525,6 @@ export function codexMetadata(cache, now = Date.now()) {
   return displayed.length === 0 ? { tokens: {}, expiresAt: 0 } : { tokens: quotaTokens(primary, secondary), expiresAt: expiryFor(cache, displayed) }
 }
 
-export function observeSequence() {
-  const value = process.hrtime.bigint()
-  if (value < 0n || value > MAX_U64) throw new Error('system monotonic sequence is outside Herdr u64 range')
-  return value.toString()
-}
-
 function validId(value) {
   return typeof value === 'string' && value.length > 0 && Array.from(value).length <= MAX_ID_CHARS && !/[\u0000-\u0020\u007f-\u009f\u2028\u2029]/u.test(value)
 }
@@ -569,23 +575,6 @@ export function parsePluginEvent(raw) {
   if (parsed.event === 'pane_agent_status_changed' && !validId(parsed.data.agent_status)) return null
   if (parsed.data.type !== undefined && parsed.data.type !== parsed.event) return null
   return { event: parsed.event, paneId: parsed.data.pane_id, workspaceId: parsed.data.workspace_id }
-}
-
-export function runHerdr(env, args, options = {}) {
-  const clock = options.clock || Date.now
-  const deadline = options.deadline ?? clock() + INVOCATION_DEADLINE_MS
-  const remaining = Math.floor(deadline - clock())
-  if (remaining <= 0) throw new Error('invocation deadline exhausted before Herdr command')
-  const result = spawnSync(env.HERDR_BIN_PATH || 'herdr', args, {
-    encoding: 'utf8',
-    env,
-    timeout: Math.min(COMMAND_TIMEOUT_MS, remaining),
-    killSignal: 'SIGKILL',
-    maxBuffer: MAX_OUTPUT_BYTES
-  })
-  if (result.error) throw new Error(`herdr ${args.slice(0, 2).join(' ')} failed: ${result.error.code || result.error.message}`)
-  if (result.status !== 0) throw new Error(`herdr ${args.slice(0, 2).join(' ')} failed: ${sanitizeToken(result.stderr).slice(0, 200)}`)
-  return result.stdout
 }
 
 function parseAgents(output) {
@@ -667,16 +656,100 @@ async function reconcile(env, options = {}) {
   return { reports, sequence }
 }
 
-export async function refresh(env = process.env, options = {}) {
+export async function refreshPaneMetadata(env = process.env, options = {}) {
   return reconcile(env, options)
+}
+
+export async function refresh(env = process.env, options = {}) {
+  const clock = options.clock || Date.now
+  const deadline = options.deadline ?? clock() + INVOCATION_DEADLINE_MS
+  const sequence = String((options.sequence || observeSequence)())
+  const paneResult = await reconcile(env, { ...options, clock, deadline, sequence: () => sequence })
+  let workspaceResult = { reports: 0, sequence }
+  try {
+    workspaceResult = await reconcileWorkspaces(env, { ...options, clock, deadline, sequence: () => sequence })
+  } catch (error) {
+    if (options.throwWorkspaceError || error.message?.includes('deadline exhausted') || error.message?.includes('workspace refresh limit')) throw error
+    if (options.warn) options.warn(`workspace metadata refresh failed: ${error.message}`)
+  }
+  return { reports: paneResult.reports, workspaceReports: workspaceResult.reports, sequence }
 }
 
 export async function eventRefresh(env = process.env, options = {}) {
   const event = parsePluginEvent(options.rawEvent ?? env.HERDR_PLUGIN_EVENT_JSON)
   if (!event) return { reports: 0, invalidEvent: true }
-  return reconcile(env, { ...options, targetPaneId: event.paneId })
+  const clock = options.clock || Date.now
+  const deadline = options.deadline ?? clock() + INVOCATION_DEADLINE_MS
+  const sequence = String((options.sequence || observeSequence)())
+
+  let snapshot
+  try {
+    snapshot = observeSnapshot(env, { clock, deadline })
+  } catch (error) {
+    if (options.throwWorkspaceError || error.message?.includes('deadline exhausted') || error.message?.includes('workspace refresh limit')) throw error
+    if (options.warn) options.warn(`workspace metadata event refresh failed: ${error.message}`)
+    return { reports: 0, workspaceReports: 0, sequence }
+  }
+
+  if (!validateEventSnapshot(snapshot, event.paneId, event.workspaceId)) {
+    return { reports: 0, workspaceReports: 0, sequence }
+  }
+
+  const paneResult = await reconcile(env, {
+    ...options,
+    clock,
+    deadline,
+    targetPaneId: event.paneId,
+    sequence: () => sequence
+  })
+
+  let workspaceResult = { reports: 0, sequence }
+  try {
+    workspaceResult = await reconcileWorkspaces(env, {
+      ...options,
+      clock,
+      deadline,
+      snapshot,
+      targetWorkspaceId: event.workspaceId,
+      sequence: () => sequence
+    })
+  } catch (error) {
+    if (options.throwWorkspaceError || error.message?.includes('deadline exhausted') || error.message?.includes('workspace refresh limit')) throw error
+    if (options.warn) options.warn(`workspace metadata event refresh failed: ${error.message}`)
+  }
+
+  return { reports: paneResult.reports, workspaceReports: workspaceResult.reports, sequence }
 }
 
 export async function clearOwnedMetadata(env = process.env, options = {}) {
-  return reconcile(env, { ...options, clearOnly: true })
+  const clock = options.clock || Date.now
+  const deadline = options.deadline ?? clock() + INVOCATION_DEADLINE_MS
+  const sequence = String((options.sequence || observeSequence)())
+
+  let paneResult = { reports: 0, sequence }
+  let paneError = null
+  try {
+    paneResult = await reconcile(env, { ...options, clock, deadline, sequence: () => sequence, clearOnly: true })
+  } catch (error) {
+    paneError = error
+  }
+
+  let workspaceResult = { reports: 0, sequence }
+  let workspaceError = null
+  try {
+    workspaceResult = await clearWorkspaceMetadata(env, { ...options, clock, deadline, sequence: () => sequence })
+  } catch (error) {
+    workspaceError = error
+  }
+
+  if (paneError && workspaceError) {
+    const error = new Error(`pane cleanup failed (${paneError.message}); workspace cleanup failed (${workspaceError.message})`)
+    error.paneError = paneError
+    error.workspaceError = workspaceError
+    throw error
+  }
+  if (paneError) throw paneError
+  if (workspaceError) throw workspaceError
+
+  return { reports: paneResult.reports, workspaceReports: workspaceResult.reports, sequence }
 }

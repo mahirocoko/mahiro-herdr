@@ -580,3 +580,72 @@ test('end-to-end compatibility with readUsageCache and agyMetadata', async () =>
   assert.match(metadata.tokens.mahiro_sidebar_q2_warn, /Claude-GPT 5h\/7d 45\/92%/)
   assert.ok(metadata.expiresAt > now)
 })
+
+test('changed Agy payload publication refresh is pane-only: zero api snapshot, zero git/workspace reporting', async () => {
+  const setup = await fixture()
+  const now = 1789300000000
+  const executable = join(setup.root, 'herdr-stub.mjs')
+  const log = join(setup.root, 'herdr.log')
+  const inventory = join(setup.root, 'inventory.json')
+  const agents = [{ pane_id: 'w1:p1', workspace_id: 'w1', agent: 'agy', tokens: {} }]
+  await writeFile(inventory, JSON.stringify({ id: 'cli:agent:list', result: { agents } }))
+  await writeFile(log, '')
+  await writeFile(executable, `#!/usr/bin/env node
+import { appendFileSync, readFileSync } from 'node:fs'
+const args = process.argv.slice(2)
+appendFileSync(process.env.HERDR_TEST_LOG, JSON.stringify(args) + '\\n')
+if (args[0] === 'agent' && args[1] === 'list') {
+  process.stdout.write(readFileSync(process.env.HERDR_TEST_INVENTORY, 'utf8'))
+} else if (args[0] === 'pane' && args[1] === 'report-metadata') {
+  // accepted
+} else if (args[0] === 'api' && args[1] === 'snapshot') {
+  process.stdout.write(JSON.stringify({ version: '0.9.1', protocol: 22, workspaces: [{ workspace_id: 'w1' }], tabs: [], panes: [], layouts: [], agents: [] }))
+} else if (args[0] === 'workspace' && args[1] === 'report-metadata') {
+  // accepted
+}
+`)
+  await chmod(executable, 0o755)
+
+  const payload = {
+    quota: {
+      'gemini-5h': { remaining_fraction: 0.85, reset_time: '2026-09-14T05:00:00Z', reset_in_seconds: 3600 }
+    }
+  }
+
+  const env = {
+    ...setup.env,
+    PATH: process.env.PATH,
+    HERDR_BIN_PATH: executable,
+    HERDR_TEST_LOG: log,
+    HERDR_TEST_INVENTORY: inventory,
+    HERDR_ENV: '1',
+    HERDR_PANE_ID: 'w1:p1'
+  }
+
+  const result = await publishAgyQuota(payload, {
+    cachePath: setup.cachePath,
+    clock: () => now,
+    env
+  })
+
+  assert.equal(result.published, true)
+  assert.equal(result.refreshed, true)
+  assert.equal(result.refreshError, null)
+
+  const logContent = await readFile(log, 'utf8')
+  const calls = logContent.trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
+
+  // Verified: pane tokens were refreshed!
+  const paneReports = calls.filter(c => c[0] === 'pane' && c[1] === 'report-metadata')
+  assert.equal(paneReports.length, 1)
+  assert.equal(paneReports[0][2], 'w1:p1')
+
+  // Verified: zero api snapshot calls!
+  const snapshotCalls = calls.filter(c => c[0] === 'api' && c[1] === 'snapshot')
+  assert.equal(snapshotCalls.length, 0)
+
+  // Verified: zero workspace reporting or git inspection calls!
+  const workspaceReports = calls.filter(c => c[0] === 'workspace' && c[1] === 'report-metadata')
+  assert.equal(workspaceReports.length, 0)
+  assert.equal(calls.some(call => call.some(arg => String(arg).includes('git'))), false)
+})

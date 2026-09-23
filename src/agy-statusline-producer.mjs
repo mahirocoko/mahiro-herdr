@@ -2,7 +2,7 @@ import { chmod, lstat, mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, parse as parsePath, resolve as resolvePath, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
-import { readUsageCache, refresh, sanitizeToken, usageCacheDir } from './core.mjs'
+import { readUsageCache, refreshPaneMetadata, sanitizeToken, usageCacheDir } from './core.mjs'
 
 export const DEFAULT_CACHE_FILENAME = 'agy.json'
 export const DEDUPE_TTL_MS = 120 * 1000
@@ -242,7 +242,7 @@ export async function publishAgyQuota(payload, options = {}) {
       if (typeof options._refreshHerdrForTest === 'function') {
         await options._refreshHerdrForTest(env)
       } else {
-        await refresh(env, { clock, deadline: now + COMMAND_TIMEOUT_MS })
+        await refreshPaneMetadata(env, { clock, deadline: now + COMMAND_TIMEOUT_MS })
       }
       refreshed = true
     } catch (error) {

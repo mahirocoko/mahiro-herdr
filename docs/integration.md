@@ -1,6 +1,6 @@
 # Open adapter integration protocol
 
-Mahiro Herdr Sidebar provides a read-only Herdr cache adapter (`src/core.mjs`) and an optional native Agy statusline quota producer (`src/agy-statusline-producer.mjs`).
+Mahiro Herdr Sidebar provides a read-only Herdr cache adapter (`src/core.mjs`), an optional native Agy statusline quota producer (`src/agy-statusline-producer.mjs`), and a workspace metadata bridge (`src/workspace-metadata.mjs`, v0.4.0+).
 
 The core adapter never contacts a provider, never reads credentials, and only projects normalized cache snapshots into Herdr agent rows. Quota snapshots are written to disk by an external producer (such as Mahiro Mods or the native Agy producer module), and pane tokens identify eligible panes.
 
@@ -78,7 +78,7 @@ Known bucket IDs are mapped to normalized labels in strict fixed order:
 - Refuses symlinks in every target-path component and non-regular files or directories.
 - Sets user-only permissions (`0o600` for files, `0o700` for directories).
 - **120-second deduplication**: If the existing cache file is valid and younger than 120 seconds, labels and remaining percentages match, and reset targets differ by no more than 120 seconds, disk write and Herdr refresh are skipped. This treats a bounded `reset_in_seconds` countdown as the same semantic reset window.
-- **Changed or aged write**: If semantic windows change or the existing snapshot is 120+ seconds old, the producer writes the updated snapshot and triggers at most one refresh only when the runtime has both `HERDR_ENV=1` and a non-empty `HERDR_PANE_ID`. The default runtime refresh path has a five-second deadline.
+- **Changed or aged write**: If semantic windows change or the existing snapshot is 120+ seconds old, the producer writes the updated snapshot and triggers at most one pane-only refresh through `refreshPaneMetadata` only when the runtime has both `HERDR_ENV=1` and a non-empty `HERDR_PANE_ID`. That five-second path never invokes a workspace snapshot, Git inspection, or workspace report; combined pane + workspace reconciliation remains owned by startup, manual, configure, and install refreshes.
 - **Fault isolation**: Cache publication success survives Herdr refresh failure; if the refresh call errors or times out, the cache write remains committed and successful.
 - **Race safety**: Multiple one-shot statusline processes write to unique temporary files before atomically renaming to `agy.json`. No lock directories or stale locks are deleted.
 
@@ -112,6 +112,44 @@ Codex quota is eligible only for an inventory entry where:
 An external integration such as Mahiro Mods must publish and own that pane token. This adapter reads it only from Herdr's agent inventory and never sets or clears it. It likewise never sets or clears `mahiro_sidebar_model` or `mahiro_sidebar_context`.
 
 Agy quota is eligible only for an inventory entry whose `agent` is exactly `agy` and which is not launch-pending. Agy values are account-level shared pools, not active-session attribution.
+
+## Workspace metadata bridge (v0.4.0+)
+
+The module `src/workspace-metadata.mjs` implements an allowlisted, bounded cross-client projection of workspace Git facts for Herdr Web.
+
+### Ground truth and boundaries
+
+- Herdr 0.9.1 already renders native Space built-ins `branch` and `git_status`, but public workspace snapshots do not expose their values.
+- This plugin does **NOT** replace native Space rendering. It publishes cross-client workspace tokens for web and remote clients.
+- Canonical source: `mahiro-herdr-sidebar.workspace`.
+- Canonical owned workspace tokens:
+  1. `mahiro_workspace_branch`: sanitized/bounded branch name (detached HEAD uses `detached@<short sha>`).
+  2. `mahiro_workspace_git_status`: exact `clean` or `dirty`.
+  3. `mahiro_workspace_worktree`: bounded linked-worktree label (omitted / cleared if not linked).
+- Subprocess argv without shell is used for Git; no shell interpolation or script wrappers.
+- Display-only: values have a bounded TTL (5 minutes by default) so stale facts expire if unattended.
+- Sequences use the invocation-wide system-monotonic `u64` sequence shared with pane reports.
+
+### Deterministic repository selection
+
+1. If `workspace.worktree.is_linked_worktree === true` and `workspace.worktree.checkout_path` is a valid absolute path, that directory is selected as the repository cwd, and its basename becomes the worktree label.
+2. Otherwise, the active tab layout's focused pane (`foreground_cwd || cwd`) is selected.
+3. If the focused pane has no valid cwd, deterministic fallbacks apply in strict order:
+   - Non-linked `workspace.worktree.checkout_path` if present on the workspace.
+   - Panes in the active tab if all valid cwds resolve to the exact same directory.
+   - All panes in the workspace if all valid cwds resolve to the exact same directory.
+4. If candidate cwd cannot be determined or if multiple active-tab panes have conflicting directories without a focused pane, repository evidence is ambiguous -> all owned workspace tokens are cleared.
+
+### Path leakage prevention
+
+Token values never leak absolute filesystem paths. Worktree labels are bounded to the directory basename (e.g. `repo-feature-worktree`), and branch names are sanitized and capped at 80 characters.
+
+### Lifecycle coordination & fault isolation
+
+- **Startup / manual refresh**: reconciles all bounded workspaces in addition to pane quota reconciliation.
+- **Exact pane events**: reconcile only that explicit inventory-backed pane for quota, and additionally reconcile only that event's exact workspace.
+- **Uninstall / restore**: best-effort clears both pane-owned and workspace-owned tokens (`clearOwnedMetadata`).
+- **Fault isolation**: failure of workspace metadata inspection or reporting never touches quota cache files (`agy.json`, `codex.json`) and never broadens pane token ownership.
 
 ## Fail-closed behavior
 

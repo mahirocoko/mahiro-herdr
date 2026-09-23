@@ -16,6 +16,7 @@ import {
   parsePluginEvent,
   readUsageCache,
   refresh,
+  refreshPaneMetadata,
   restoreConfig
 } from '../src/core.mjs'
 import { configureLive, installWorkflow, restoreLive, uninstallWorkflow } from '../src/workflows.mjs'
@@ -88,6 +89,22 @@ if (args[0] === 'agent' && args[1] === 'list') {
   process.stdout.write(readFileSync(process.env.HERDR_TEST_REGISTRY, 'utf8'))
 } else if (args[0] === 'plugin' && args[1] === 'config-dir') {
   process.stdout.write(process.env.HERDR_TEST_PLUGIN_CONFIG + '\\n')
+} else if (args[0] === 'api' && args[1] === 'snapshot') {
+  if (process.env.HERDR_TEST_SNAPSHOT && existsSync(process.env.HERDR_TEST_SNAPSHOT)) {
+    process.stdout.write(readFileSync(process.env.HERDR_TEST_SNAPSHOT, 'utf8'))
+  } else {
+    let defaultPanes = []
+    let defaultWorkspaces = []
+    try {
+      const rawInv = existsSync(process.env.HERDR_TEST_INVENTORY) ? JSON.parse(readFileSync(process.env.HERDR_TEST_INVENTORY, 'utf8')) : null
+      const invAgents = rawInv?.result?.agents || []
+      defaultPanes = invAgents.map(a => ({ pane_id: a.pane_id, workspace_id: a.workspace_id || a.pane_id.split(':')[0] }))
+      defaultWorkspaces = [...new Set(defaultPanes.map(p => p.workspace_id))].map(id => ({ workspace_id: id }))
+    } catch {}
+    process.stdout.write(JSON.stringify({ version: '0.9.1', protocol: 22, workspaces: defaultWorkspaces, tabs: [], panes: defaultPanes, layouts: [], agents: [] }))
+  }
+} else if (args[0] === 'workspace' && args[1] === 'report-metadata') {
+  // Accepted
 } else if (args[0] === 'plugin') {
   const state = JSON.parse(readFileSync(process.env.HERDR_TEST_REGISTRY, 'utf8'))
   if (args[1] === 'link') state.plugins.push({ id: 'mahiro-herdr-sidebar', root: args[2], enabled: !args.includes('--disabled') })
@@ -167,6 +184,12 @@ test('each exact event reconciles only its explicit inventory-backed pane', asyn
   }
   await writeFile(stub.log, '')
   await eventRefresh(stub.env, { rawEvent: validEvent('pane_focused', 'missing'), clock: () => now, sequence: () => '11' })
+  assert.equal(reportCalls(await calls(stub.log)).length, 0)
+  await writeFile(stub.log, '')
+  // Syntactically valid pair with mismatched workspace_id
+  const mismatched = JSON.stringify({ event: 'pane_focused', data: { type: 'pane_focused', pane_id: 'w1:p2', workspace_id: 'w2', agent_status: 'working' } })
+  const mismatchedRes = await eventRefresh(stub.env, { rawEvent: mismatched, clock: () => now, sequence: () => '12' })
+  assert.equal(mismatchedRes.reports, 0)
   assert.equal(reportCalls(await calls(stub.log)).length, 0)
 })
 
@@ -667,8 +690,8 @@ test('manifest uses stateless event entrypoint and shell scripts contain no Herd
   const packageJson = JSON.parse(await readFile(new URL('package.json', root), 'utf8'))
   const license = await readFile(new URL('LICENSE', root), 'utf8')
   assert.match(manifest, /startup"\]/u)
-  assert.match(manifest, /version = "0\.3\.0"/u)
-  assert.equal(packageJson.version, '0.3.0')
+  assert.match(manifest, /version = "0\.4\.0"/u)
+  assert.equal(packageJson.version, '0.4.0')
   assert.equal(packageJson.license, 'MIT')
   assert.equal(packageJson.private, true)
   assert.match(license, /^MIT License/u)
@@ -681,4 +704,17 @@ test('manifest uses stateless event entrypoint and shell scripts contain no Herd
   assert.equal(scripts.some(source => /^\s*herdr\b/gmu.test(source)), false)
   const core = await readFile(new URL('src/core.mjs', root), 'utf8')
   assert.doesNotMatch(core, /refresh-state|pane['"],\s*['"](?:read|get)|agent\s+view/iu)
+})
+
+test('refreshPaneMetadata exports focused pane-only seam', async () => {
+  const setup = await fixture()
+  const now = Date.now()
+  const stub = await stubHerdr(setup, [agent('w1:p1', 'other')])
+  const result = await refreshPaneMetadata(stub.env, { clock: () => now, sequence: () => '999' })
+  assert.equal(result.reports, 1)
+  assert.equal(result.workspaceReports, undefined)
+  const entries = await calls(stub.log)
+  assert.equal(entries.filter(c => c[0] === 'pane').length, 1)
+  assert.equal(entries.filter(c => c[0] === 'workspace').length, 0)
+  assert.equal(entries.filter(c => c[0] === 'api' && c[1] === 'snapshot').length, 0)
 })
