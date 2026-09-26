@@ -2,17 +2,17 @@
 
 Mahiro Herdr Sidebar provides a read-only Herdr cache adapter (`src/core.mjs`), an optional native Agy statusline quota producer (`src/agy-statusline-producer.mjs`), and a workspace metadata bridge (`src/workspace-metadata.mjs`, v0.4.0+).
 
-The core adapter never contacts a provider, never reads credentials, and only projects normalized cache snapshots into Herdr agent rows. Quota snapshots are written to disk by an external producer (such as Mahiro Mods or the native Agy producer module), and pane tokens identify eligible panes.
+The core adapter never contacts a provider, never reads credentials, and only projects normalized cache snapshots into Herdr agent rows. Quota snapshots are written to disk by an external integration implementing this protocol directly or calling one of the repository helpers, and pane identity/tokens determine eligible panes.
 
 ## Cache location
 
-The default directory is `~/.letta/mods/mahiro-usage` for [Mahiro Mods v0.10.0+](https://github.com/mahirocoko/mods/releases/tag/v0.10.0) Codex-cache compatibility. Set `MAHIRO_HERDR_USAGE_CACHE_DIR` to a non-empty absolute path in the environments that launch both the producer and Herdr server to use another directory. Plugin actions and events inherit that value. The adapter normalizes the path before appending `codex.json` or `agy.json`; relative and empty overrides fail closed.
+The default directory is `~/.letta/mods/mahiro-usage` for [Mahiro Mods v0.10.0+](https://github.com/mahirocoko/mods/releases/tag/v0.10.0) Codex-cache compatibility. Set `MAHIRO_HERDR_USAGE_CACHE_DIR` to a non-empty absolute path in the environments that launch both the producer and Herdr server to use another directory. Plugin actions and events inherit that value. The adapter normalizes the path before appending `codex.json`, `agy.json`, or `cursor.json`; relative and empty overrides fail closed.
 
-A producer must create the directory with user-only permissions (`0o700`) and publish each file atomically by writing a sibling temporary regular file (`0o600`) and renaming it into place. The adapter opens final cache files read-only and nonblocking, refuses symlinks and non-regular files, and bounds reads to 64 KiB. The Agy producer also refuses unsafe targets and never changes a shared parent directory's permissions.
+A producer must create the directory with user-only permissions (`0o700`) and publish each file atomically by writing a sibling temporary regular file (`0o600`) and renaming it into place. The adapter opens final cache files read-only and nonblocking, refuses symlinks and non-regular files, and bounds reads to 64 KiB. The repository-owned Agy helper and Agent Halo's Cursor producer also refuse unsafe targets and never change a shared parent directory's permissions.
 
 ## Normalized JSON schema
 
-Both `codex.json` and `agy.json` use this schema. All time values are Unix epoch milliseconds and `remaining` is percentage points, not a fraction.
+The cache files use this schema. All time values are Unix epoch milliseconds and `remaining` is percentage points, not a fraction.
 
 ```json
 {
@@ -43,8 +43,9 @@ Accepted labels are exact and case-sensitive:
 
 - `codex.json`: `P:5h`, `P:7d`, `S:7d`. `P:7d` is preferred when both seven-day labels exist. Model-prefixed labels are ignored.
 - `agy.json`: `Gemini:5h`, `Gemini:7d`, `Claude-GPT:5h`, `Claude-GPT:7d`.
+- `cursor.json`: `Auto`, `API`. `remaining` is percentage points left (`100 - used`). A `Plan` window is ignored.
 
-A cache is usable only before `fetched + 300000 ms - 5000 ms`. A window is displayable only when its reset is more than `5000 ms` reset margin plus `1000 ms` delivery headroom ahead. Herdr metadata expiry is bounded by both cache freshness and the earliest displayed reset; another `1000 ms` is removed when computing the report TTL. Expired or unusable data produces token clears, never stale quota.
+Codex and Agy caches are usable only before `fetched + 300000 ms - 5000 ms`. Cursor cache freshness is family-specific: it remains usable before `fetched + 3900000 ms - 5000 ms`, covering Agent Halo's configurable maximum 60-minute usage refresh cadence plus headroom while its desktop renderer is running, without introducing another poller. If Agent Halo is absent or refresh fails, that cache expires and Cursor rows clear. A window is displayable only when its reset is more than `5000 ms` reset margin plus `1000 ms` delivery headroom ahead. Herdr metadata expiry is bounded by both family cache freshness and the earliest displayed reset; another `1000 ms` is removed when computing the report TTL. Expired or unusable data produces token clears, never stale quota.
 
 ## Agy statusline quota producer (v0.3.0+)
 
@@ -113,6 +114,10 @@ An external integration such as Mahiro Mods must publish and own that pane token
 
 Agy quota is eligible only for an inventory entry whose `agent` is exactly `agy` and which is not launch-pending. Agy values are account-level shared pools, not active-session attribution.
 
+Cursor quota is eligible only for an inventory entry whose `agent` is exactly `cursor` and which is not launch-pending. Agent Halo is the canonical trusted producer: its existing direct Cursor provider integration owns credential discovery, token refresh, and current-period usage collection, then publishes only `{ fetched, failed: false, windows }` to `cursor.json`. Valid [0, 100] `autoPercentUsed` and `apiPercentUsed` values become remaining `Auto` and `API` windows in fixed order with the billing-cycle reset. Plan totals, plan name, credits, tokens, credentials, history, and every other provider field must not enter the normalized cache.
+
+At reviewed Cursor Agent version `2026.09.23-86fc751`, the custom statusline payload contains session, model, workspace, and context-window fields but no account usage. Cursor statusline and hooks are therefore not quota sources. This repository remains read-only: it does not invoke Cursor Agent, scrape the interactive `/usage` view, inspect authentication state, contact Cursor, or duplicate Agent Halo's provider integration.
+
 ## Workspace metadata bridge (v0.4.0+)
 
 The module `src/workspace-metadata.mjs` implements an allowlisted, bounded cross-client projection of workspace Git facts for Herdr Web.
@@ -149,7 +154,7 @@ Token values never leak absolute filesystem paths. Worktree labels are bounded t
 - **Startup / manual refresh**: reconciles all bounded workspaces in addition to pane quota reconciliation.
 - **Exact pane events**: reconcile only that explicit inventory-backed pane for quota, and additionally reconcile only that event's exact workspace.
 - **Uninstall / restore**: best-effort clears both pane-owned and workspace-owned tokens (`clearOwnedMetadata`).
-- **Fault isolation**: failure of workspace metadata inspection or reporting never touches quota cache files (`agy.json`, `codex.json`) and never broadens pane token ownership.
+- **Fault isolation**: failure of workspace metadata inspection or reporting never touches quota cache files (`agy.json`, `codex.json`, `cursor.json`) and never broadens pane token ownership.
 
 ## Fail-closed behavior
 

@@ -6,10 +6,12 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 import {
+  CURSOR_FRESH_MS,
   MAX_TARGETS,
   OWNED_TOKENS,
   acquireConfigLock,
   codexMetadata,
+  cursorMetadata,
   configure,
   eventRefresh,
   hasAgentsOwner,
@@ -248,6 +250,85 @@ test('Codex P seven-day window wins over S regardless of cache order', () => {
   assert.equal(metadata.expiresAt, now + 55_000)
 })
 
+test('Cursor auto and api occupy the two quota rows and plan is ignored', () => {
+  const now = Date.now()
+  const cache = {
+    freshUntil: now + 120_000,
+    windows: [
+      { label: 'API', remaining: 10, reset: now + 90_000 },
+      { label: 'Plan', remaining: 73.4, reset: now + 70_000 },
+      { label: 'Auto', remaining: 40, reset: now + 80_000 }
+    ]
+  }
+  const metadata = cursorMetadata(cache, now)
+  assert.equal(metadata.tokens.mahiro_sidebar_q1_warn, 'Cursor auto 40%')
+  assert.equal(metadata.tokens.mahiro_sidebar_q2_critical, 'Cursor api 10%')
+  assert.equal(metadata.expiresAt, now + 75_000)
+})
+
+test('a lone Cursor api window occupies the first quota row', async () => {
+  const setup = await fixture()
+  const now = Date.now()
+  const stub = await stubHerdr(setup, [agent('w1:p1', 'cursor', {}, { agent_status: 'working' })])
+  await writeCache(join(setup.cache, 'cursor.json'), [{ label: 'API', remaining: 12, reset: now + 60_000 }], now)
+  await refresh(stub.env, { clock: () => now, sequence: () => '42' })
+  const report = reportCalls(await calls(stub.log))[0]
+  assert.ok(report.some(value => String(value).startsWith('mahiro_sidebar_q1_critical=Cursor api 12%')))
+  await assert.rejects(readFile(join(setup.cache, 'codex.json')), error => error.code === 'ENOENT')
+  await assert.rejects(readFile(join(setup.cache, 'agy.json')), error => error.code === 'ENOENT')
+})
+
+test('Cursor launch-pending variants receive all-clear while a live pane receives quota', async () => {
+  const setup = await fixture()
+  const now = Date.now()
+  const stub = await stubHerdr(setup, [
+    agent('w1:p1', 'cursor', {}, { agent_status: 'working' }),
+    agent('w1:p2', 'cursor', {}, { launch_pending: true }),
+    agent('w1:p3', 'cursor', {}, { agent_status: 'launching' }),
+    agent('w1:p4', 'cursor', { launch_pending: 'true' })
+  ])
+  await writeCache(join(setup.cache, 'cursor.json'), [{ label: 'Auto', remaining: 80, reset: now + 60_000 }], now)
+  await refresh(stub.env, { clock: () => now, sequence: () => '43' })
+  const reports = reportCalls(await calls(stub.log))
+  assert.equal(reports.length, 4)
+  assert.ok(reports[0].some(value => String(value).startsWith('mahiro_sidebar_q1_ok=Cursor auto 80%')))
+  for (const report of reports.slice(1)) {
+    assert.equal(report.filter(value => value === '--clear-token').length, OWNED_TOKENS.length)
+    assert.equal(report.includes('--token'), false)
+  }
+})
+
+test('only an exact live Cursor agent causes only cursor.json to be read', async () => {
+  const setup = await fixture()
+  const now = Date.now()
+  const stub = await stubHerdr(setup, [
+    agent('w1:p1', 'cursor', {}, { agent_status: 'working' }),
+    agent('w1:p2', 'cursor-agent', {}, { agent_status: 'working' }),
+    agent('w1:p3', 'letta', {}, { agent_status: 'working' })
+  ])
+  const reads = []
+  await refresh(stub.env, {
+    clock: () => now,
+    sequence: () => '44',
+    _readUsageCacheForTest: async path => {
+      reads.push(path)
+      return {
+        fetched: now,
+        freshUntil: now + 120_000,
+        windows: [{ label: 'Auto', remaining: 80, reset: now + 60_000 }]
+      }
+    }
+  })
+  assert.equal(reads.length, 1)
+  assert.equal(reads[0], join(setup.cache, 'cursor.json'))
+  const reports = reportCalls(await calls(stub.log))
+  assert.ok(reports[0].some(value => String(value).startsWith('mahiro_sidebar_q1_ok=Cursor auto 80%')))
+  for (const report of reports.slice(1)) {
+    assert.equal(report.filter(value => value === '--clear-token').length, OWNED_TOKENS.length)
+    assert.equal(report.includes('--token'), false)
+  }
+})
+
 test('observation sequences are invocation-wide u64 values and preserve order', async () => {
   const setup = await fixture()
   const now = Date.now()
@@ -281,6 +362,7 @@ test('cache written during inventory is accepted and only needed family is read'
   const report = reportCalls(await calls(stub.log))[0]
   assert.ok(report.some(value => String(value).includes('Codex 7d 44%')))
   await assert.rejects(readFile(join(setup.cache, 'agy.json')), error => error.code === 'ENOENT')
+  await assert.rejects(readFile(join(setup.cache, 'cursor.json')), error => error.code === 'ENOENT')
 })
 
 test('full refresh rejects oversized inventory and fails explicitly on an exhausted deadline', async () => {
@@ -357,6 +439,18 @@ test('cache labels must match the accepted protocol before sanitization', async 
   ], now)
   const cache = await readUsageCache(path, () => now)
   assert.deepEqual(cache.windows.map(window => window.label), ['P:5h'])
+})
+
+test('Cursor cache freshness covers Agent Halo maximum refresh cadence only when explicitly selected', async () => {
+  const setup = await fixture()
+  const now = Date.now()
+  const path = join(setup.cache, 'cursor.json')
+  const fetched = now - 60 * 60_000
+  await writeCache(path, [{ label: 'Auto', remaining: 75, reset: now + 24 * 60 * 60_000 }], fetched)
+  assert.equal(await readUsageCache(path, () => now), null)
+  const cache = await readUsageCache(path, () => now, CURSOR_FRESH_MS)
+  assert.equal(cache.fetched, fetched)
+  assert.equal(cache.freshUntil, fetched + CURSOR_FRESH_MS - 5000)
 })
 
 test('absolute cache override is normalized and used without reading the default', async () => {
@@ -690,8 +784,8 @@ test('manifest uses stateless event entrypoint and shell scripts contain no Herd
   const packageJson = JSON.parse(await readFile(new URL('package.json', root), 'utf8'))
   const license = await readFile(new URL('LICENSE', root), 'utf8')
   assert.match(manifest, /startup"\]/u)
-  assert.match(manifest, /version = "0\.4\.0"/u)
-  assert.equal(packageJson.version, '0.4.0')
+  assert.match(manifest, /version = "0\.5\.0"/u)
+  assert.equal(packageJson.version, '0.5.0')
   assert.equal(packageJson.license, 'MIT')
   assert.equal(packageJson.private, true)
   assert.match(license, /^MIT License/u)

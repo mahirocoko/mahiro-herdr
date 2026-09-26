@@ -31,6 +31,7 @@ export {
 
 export const SOURCE = 'mahiro-herdr-sidebar.usage'
 export const FRESH_MS = 5 * 60 * 1000
+export const CURSOR_FRESH_MS = 65 * 60 * 1000
 export const MAX_TARGETS = 128
 export const OWNED_TOKENS = [
   'mahiro_sidebar_agy_scope',
@@ -433,7 +434,7 @@ export async function restoreCapturedConfigState(captured, env = process.env) {
   })
 }
 
-export async function readUsageCache(path, clock = Date.now) {
+export async function readUsageCache(path, clock = Date.now, freshMs = FRESH_MS) {
   let handle
   try {
     handle = await open(path, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW)
@@ -446,7 +447,7 @@ export async function readUsageCache(path, clock = Date.now) {
     const parsed = JSON.parse(buffer.subarray(0, bytesRead).toString('utf8'))
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
     if (!Number.isFinite(parsed.fetched) || parsed.fetched < MIN_TIMESTAMP || parsed.fetched > observedAt) return null
-    const freshUntil = parsed.fetched + FRESH_MS - FRESHNESS_MARGIN_MS
+    const freshUntil = parsed.fetched + freshMs - FRESHNESS_MARGIN_MS
     if (observedAt >= freshUntil || parsed.failed === true || !Array.isArray(parsed.windows)) return null
     const windows = parsed.windows.flatMap(window => {
       if (!window || typeof window.label !== 'string') return []
@@ -513,6 +514,22 @@ export function agyMetadata(cache, now = Date.now()) {
   return displayed.length === 0
     ? { tokens: {}, expiresAt: 0 }
     : { tokens: { mahiro_sidebar_agy_scope: 'Agy shared pools', ...quotaTokens(primary, secondary) }, expiresAt: expiryFor(cache, displayed) }
+}
+
+export function cursorMetadata(cache, now = Date.now()) {
+  if (!cache) return { tokens: {}, expiresAt: 0 }
+  const ordered = ['Auto', 'API']
+    .map(label => usableWindow(cache, item => item.label === label, now))
+    .filter(Boolean)
+  const row = window => {
+    const name = window.label === 'Auto' ? 'auto' : 'api'
+    return { remaining: window.remaining, text: `Cursor ${name} ${percent(window.remaining)}` }
+  }
+  const primary = ordered[0] && row(ordered[0])
+  const secondary = ordered[1] && row(ordered[1])
+  return ordered.length === 0
+    ? { tokens: {}, expiresAt: 0 }
+    : { tokens: quotaTokens(primary, secondary), expiresAt: expiryFor(cache, ordered) }
 }
 
 export function codexMetadata(cache, now = Date.now()) {
@@ -583,13 +600,14 @@ function parseAgents(output) {
   return parsed.result.agents.filter(agent => agent && validId(agent.pane_id))
 }
 
-function liveAgy(agent) {
+function liveQuotaAgent(agent, kind) {
   const status = String(agent.agent_status || '').toLowerCase()
-  return agent.agent === 'agy' && agent.launch_pending !== true && !['launching', 'pending', 'launch-pending'].includes(status) && agent.tokens?.launch_pending !== 'true'
+  return agent.agent === kind && agent.launch_pending !== true && !['launching', 'pending', 'launch-pending'].includes(status) && agent.tokens?.launch_pending !== 'true'
 }
 
 function desiredFor(agent, caches, now) {
-  if (liveAgy(agent)) return agyMetadata(caches.agy, now)
+  if (liveQuotaAgent(agent, 'agy')) return agyMetadata(caches.agy, now)
+  if (liveQuotaAgent(agent, 'cursor')) return cursorMetadata(caches.cursor, now)
   if (agent.agent === 'letta' && agent.tokens?.mahiro_sidebar_provider === 'openai-codex') return codexMetadata(caches.codex, now)
   return { tokens: {}, expiresAt: 0 }
 }
@@ -635,11 +653,14 @@ async function reconcile(env, options = {}) {
   if (targets.length === 0) return { reports: 0, sequence }
 
   const cacheRoot = usageCacheDir(env)
-  const needsAgy = !options.clearOnly && targets.some(liveAgy)
+  const cacheReader = options._readUsageCacheForTest || readUsageCache
+  const needsAgy = !options.clearOnly && targets.some(agent => liveQuotaAgent(agent, 'agy'))
+  const needsCursor = !options.clearOnly && targets.some(agent => liveQuotaAgent(agent, 'cursor'))
   const needsCodex = !options.clearOnly && targets.some(agent => agent.agent === 'letta' && agent.tokens?.mahiro_sidebar_provider === 'openai-codex')
   const caches = {
-    agy: needsAgy ? await readUsageCache(join(cacheRoot, 'agy.json'), clock) : null,
-    codex: needsCodex ? await readUsageCache(join(cacheRoot, 'codex.json'), clock) : null
+    agy: needsAgy ? await cacheReader(join(cacheRoot, 'agy.json'), clock) : null,
+    cursor: needsCursor ? await cacheReader(join(cacheRoot, 'cursor.json'), clock, CURSOR_FRESH_MS) : null,
+    codex: needsCodex ? await cacheReader(join(cacheRoot, 'codex.json'), clock) : null
   }
 
   let reports = 0

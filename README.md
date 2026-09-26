@@ -1,6 +1,6 @@
 # Mahiro Herdr Sidebar
 
-MIT-licensed open adapter that projects normalized external usage snapshots into Herdr's Agent sidebar, provides an optional native Agy statusline quota producer module, and publishes bounded workspace Git metadata for Herdr Web. It uses Node.js built-ins only, has no package dependencies, and does not contact providers.
+MIT-licensed open adapter that projects normalized external usage snapshots into Herdr's Agent sidebar, provides an optional native Agy statusline quota producer module, and publishes workspace Git metadata for Herdr Web. It uses Node.js built-ins only, has no package dependencies, and does not contact providers.
 
 The package remains `private: true` to prevent accidental npm publication. Distribution uses Herdr's GitHub plugin installer or a local Git clone; this project is not distributed through npm.
 
@@ -19,7 +19,7 @@ The source and isolated test suite support macOS and Linux. Mahiro has verified 
 For a released public version:
 
 ```sh
-herdr plugin install mahirocoko/mahiro-herdr-sidebar --ref v0.4.0
+herdr plugin install mahirocoko/mahiro-herdr-sidebar --ref v0.5.0
 herdr plugin action invoke configure --plugin mahiro-herdr-sidebar
 ```
 
@@ -52,7 +52,7 @@ The uninstall script passes its invoking checkout root to the workflow. Before d
 
 This repository provides three distinct components:
 
-1. **Read-only Herdr Adapter (`src/core.mjs`)**: The core plugin runtime. It reads normalized `codex.json` and `agy.json` cache files and projects them into Herdr agent sidebar rows. It never writes to cache files, never collects provider data, and makes no network requests.
+1. **Read-only Herdr Adapter (`src/core.mjs`)**: The core plugin runtime. It reads normalized `codex.json`, `agy.json`, and `cursor.json` cache files and projects them into Herdr agent sidebar rows. It never writes to cache files, never collects provider data, and makes no network requests.
 2. **Optional Agy Statusline Quota Producer (`src/agy-statusline-producer.mjs`)**: An opt-in helper module for Agy CLI users. It consumes already-delivered statusline payloads, normalizes the quota map, and publishes snapshots atomically to `agy.json`. It never reads credentials, email, plan tier, transcripts, sessions, or raw provider payloads, never invokes `agy -p`, and makes no network requests.
 3. **Workspace Metadata Bridge (`src/workspace-metadata.mjs`, v0.4.0+)**: A focused module publishing a bounded, allowlisted cross-client projection of Git metadata for Herdr Web without replacing native Space rendering. It observes `herdr api snapshot`, inspects Git repository evidence deterministically, and reports workspace metadata (`mahiro_workspace_branch`, `mahiro_workspace_git_status`, `mahiro_workspace_worktree`) via `herdr workspace report-metadata`.
 
@@ -62,10 +62,15 @@ By default, the adapter reads:
 
 - `~/.letta/mods/mahiro-usage/codex.json`
 - `~/.letta/mods/mahiro-usage/agy.json`
+- `~/.letta/mods/mahiro-usage/cursor.json`
 
 The default preserves compatibility with [Mahiro Mods v0.10.0+](https://github.com/mahirocoko/mods/releases/tag/v0.10.0), the reference producer for model/context/provider metadata and the normalized Codex cache. Agy quota now comes from the optional Agy statusline producer below or another external producer. To use another cache root, set `MAHIRO_HERDR_USAGE_CACHE_DIR` to a non-empty absolute directory path in the environments that launch both the producer and Herdr server; plugin actions and events inherit it. Relative or empty overrides fail closed.
 
-External producers own their collection and normalization. The optional Agy helper owns only normalization and publication of the already-delivered statusline `quota` map. The adapter only reads bounded normalized JSON and never reads credentials or raw provider payloads. Codex publication additionally requires the pane inventory token `mahiro_sidebar_provider=openai-codex`; that token must be produced and owned externally. Agy values are labeled `Agy shared pools` because they are account-level shared pools, not active-session attribution.
+External producers own their collection and normalization. The optional Agy helper owns only normalization and publication of the already-delivered statusline `quota` map. Agent Halo is the canonical trusted Cursor collector and publishes only normalized `Auto` and `API` windows to `cursor.json`; this adapter does not duplicate its credential or provider-network logic. The adapter only reads bounded normalized JSON and never reads credentials or raw provider payloads. Codex publication additionally requires the pane inventory token `mahiro_sidebar_provider=openai-codex`; that token must be produced and owned externally. Agy values are labeled `Agy shared pools` because they are account-level shared pools, not active-session attribution. Cursor values are labeled `Cursor auto` and `Cursor api` on live `cursor` panes.
+
+Codex and Agy snapshots remain usable for five minutes. Cursor snapshots remain usable for 65 minutes, covering Agent Halo's configurable maximum 60-minute usage refresh cadence plus delivery headroom while its desktop renderer is running, without adding another poller. If Agent Halo is not running or refresh fails, the cache expires and Cursor rows clear.
+
+Cursor quota support requires Mahiro Herdr Sidebar v0.5.0+ and Agent Halo v0.1.15+ as the trusted producer.
 
 See [Open adapter integration protocol](docs/integration.md) for the exact JSON schema, milliseconds/percentage units, accepted labels, freshness and reset margins, pane-token contract, and fail-closed rules.
 
@@ -121,9 +126,9 @@ On a failed install or uninstall, read the complete error before retrying. Do no
 
 ## Privacy and security model
 
-The trust boundary is local and narrow: Herdr inventory, two normalized cache files, plugin-owned recovery evidence, and Herdr's CLI. Cache files are opened nonblocking without following final-component symlinks and are bounded to 64 KiB. Values and identifiers are validated and output is sanitized and bounded. No secrets are required by CI or by this adapter.
+The trust boundary is local and narrow: Herdr inventory, three normalized cache files, plugin-owned recovery evidence, and Herdr's CLI. Cache files are opened nonblocking without following final-component symlinks and are bounded to 64 KiB. Values and identifiers are validated and output is sanitized and bounded. No secrets are required by CI or by this adapter.
 
-External producers remain outside this repository's trust and lifecycle boundary. The optional Agy helper is inside the repository boundary but accepts only the documented statusline `quota` map and publishes only its normalized allowlist. Keep cache directories user-readable only, publish snapshots atomically, and never place credentials or raw provider responses in the normalized files.
+External collectors remain outside this repository's trust and lifecycle boundary. The optional Agy helper is inside the repository boundary but accepts only the documented statusline object and publishes only its normalized allowlist. Agent Halo owns Cursor collection and publication outside this repository. Keep cache directories user-readable only, publish snapshots atomically, and never place credentials or raw provider responses in the normalized files.
 
 ## Development
 
@@ -138,6 +143,6 @@ Tests isolate HOME, cache, Herdr configuration, and a stub Herdr executable. The
 
 ## Non-goals
 
-This repository does not contact providers, poll Agy, invoke `agy -p`, inspect panes, attribute shared Agy quota to a session, manage Mahiro Mods, manage credentials, install upstream plugins, expose settings, emit alerts, reorder agents, or perform live installation and visual acceptance as part of source development.
+This repository does not contact providers, poll Agy or Cursor, invoke `agy -p` or Cursor Agent, scrape Cursor's `/usage` UI, inspect panes, attribute shared Agy quota to a session, manage Mahiro Mods, manage credentials, install upstream plugins, expose settings, emit alerts, reorder agents, or perform live installation and visual acceptance as part of source development.
 
 The design was informed by `levi-qiao/herdr-agent-quota` at reviewed commit `0540feb1d51bb7618f94f02aa804493614b1ba0d`; no claim is made that its source was copied.
