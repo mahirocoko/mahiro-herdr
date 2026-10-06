@@ -32,7 +32,7 @@ test('native popup keeps original project context without a popup pane ID', asyn
   const { call } = fixture()
   const env = {
     HERDR_ENV: '1',
-    HERDR_PLUGIN_ID: 'mahiro-herdr-sidebar',
+    HERDR_PLUGIN_ID: 'mahiro-herdr',
     MAHIRO_ACTION_CONTEXT: JSON.stringify(context)
   }
   assert.deepEqual(
@@ -53,7 +53,7 @@ test('native action derives and validates its exact focused workspace/pane', asy
   const { call } = fixture()
   const env = {
     HERDR_ENV: '1',
-    HERDR_PLUGIN_ID: 'mahiro-herdr-sidebar',
+    HERDR_PLUGIN_ID: 'mahiro-herdr',
     HERDR_PLUGIN_CONTEXT_JSON: JSON.stringify({
       focused_pane_id: 'w1:p1',
       workspace_id: 'w1'
@@ -92,7 +92,7 @@ test('native opener passes a frozen project context via argv to declared picker'
     'pane',
     'open',
     '--plugin',
-    'mahiro-herdr-sidebar',
+    'mahiro-herdr',
     '--entrypoint',
     'project-actions-picker',
     '--cwd',

@@ -29,7 +29,7 @@ export {
   sanitizeToken
 } from './runtime-helpers.mjs'
 
-export const SOURCE = 'mahiro-herdr-sidebar.usage'
+export const SOURCE = 'mahiro-herdr.usage'
 export const FRESH_MS = 5 * 60 * 1000
 export const CURSOR_FRESH_MS = 65 * 60 * 1000
 export const MAX_TARGETS = 128
@@ -43,7 +43,7 @@ export const OWNED_TOKENS = [
   'mahiro_sidebar_q2_critical'
 ]
 
-const OWNER = 'mahiro-herdr-sidebar'
+const OWNER = 'mahiro-herdr'
 const MAX_CACHE_BYTES = 64 * 1024
 const MAX_EVENT_BYTES = 64 * 1024
 const MAX_ID_CHARS = 128

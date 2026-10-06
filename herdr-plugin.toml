@@ -1,4 +1,4 @@
-id = "mahiro-herdr-sidebar"
+id = "mahiro-herdr"
 name = "Mahiro Herdr"
 version = "0.6.0"
 min_herdr_version = "0.9.3"
@@ -6,7 +6,7 @@ description = "Mahiro's Herdr integration: sidebar usage projection and cross-cl
 platforms = ["macos", "linux"]
 
 [[startup]]
-command = ["sh", "-c", "exec node \"$HERDR_PLUGIN_ROOT/bin/mahiro-herdr-sidebar.mjs\" startup"]
+command = ["sh", "-c", "exec node \"$HERDR_PLUGIN_ROOT/bin/mahiro-herdr.mjs\" startup"]
 
 [[actions]]
 id = "project-actions"
@@ -25,29 +25,29 @@ command = ["sh", "-c", "exec node \"$HERDR_PLUGIN_ROOT/bin/mahiro-herdr-actions.
 [[actions]]
 id = "refresh"
 title = "Refresh Mahiro sidebar metadata"
-command = ["sh", "-c", "exec node \"$HERDR_PLUGIN_ROOT/bin/mahiro-herdr-sidebar.mjs\" refresh"]
+command = ["sh", "-c", "exec node \"$HERDR_PLUGIN_ROOT/bin/mahiro-herdr.mjs\" refresh"]
 
 [[actions]]
 id = "configure"
 title = "Configure Mahiro sidebar rows"
-command = ["sh", "-c", "exec node \"$HERDR_PLUGIN_ROOT/bin/mahiro-herdr-sidebar.mjs\" configure-live"]
+command = ["sh", "-c", "exec node \"$HERDR_PLUGIN_ROOT/bin/mahiro-herdr.mjs\" configure-live"]
 
 [[actions]]
 id = "uninstall"
 title = "Restore Mahiro sidebar configuration"
-command = ["sh", "-c", "exec node \"$HERDR_PLUGIN_ROOT/bin/mahiro-herdr-sidebar.mjs\" restore-live"]
+command = ["sh", "-c", "exec node \"$HERDR_PLUGIN_ROOT/bin/mahiro-herdr.mjs\" restore-live"]
 
 [[events]]
-id = "mahiro-herdr-sidebar-agent-detected"
+id = "mahiro-herdr-agent-detected"
 on = "pane.agent_detected"
-command = ["sh", "-c", "exec node \"$HERDR_PLUGIN_ROOT/bin/mahiro-herdr-sidebar.mjs\" event"]
+command = ["sh", "-c", "exec node \"$HERDR_PLUGIN_ROOT/bin/mahiro-herdr.mjs\" event"]
 
 [[events]]
-id = "mahiro-herdr-sidebar-agent-status"
+id = "mahiro-herdr-agent-status"
 on = "pane.agent_status_changed"
-command = ["sh", "-c", "exec node \"$HERDR_PLUGIN_ROOT/bin/mahiro-herdr-sidebar.mjs\" event"]
+command = ["sh", "-c", "exec node \"$HERDR_PLUGIN_ROOT/bin/mahiro-herdr.mjs\" event"]
 
 [[events]]
-id = "mahiro-herdr-sidebar-pane-focused"
+id = "mahiro-herdr-pane-focused"
 on = "pane.focused"
-command = ["sh", "-c", "exec node \"$HERDR_PLUGIN_ROOT/bin/mahiro-herdr-sidebar.mjs\" event"]
+command = ["sh", "-c", "exec node \"$HERDR_PLUGIN_ROOT/bin/mahiro-herdr.mjs\" event"]

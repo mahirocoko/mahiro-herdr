@@ -11,7 +11,7 @@ import {
   runHerdr
 } from './core.mjs'
 
-const PLUGIN_ID = 'mahiro-herdr-sidebar'
+const PLUGIN_ID = 'mahiro-herdr'
 const WORKFLOW_DEADLINE_MS = 30 * 1000
 
 function registryPlugins(output) {

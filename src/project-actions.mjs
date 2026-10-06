@@ -127,7 +127,7 @@ export const commandText = (argv) =>
   argv.map((arg) => `'${arg.replaceAll("'", "'\\''")}'`).join(' ')
 
 export const nativeActionContext = async (env, call, root = projectRoot) => {
-  if (env.HERDR_ENV !== '1' || env.HERDR_PLUGIN_ID !== 'mahiro-herdr-sidebar')
+  if (env.HERDR_ENV !== '1' || env.HERDR_PLUGIN_ID !== 'mahiro-herdr')
     throw new Error('Native picker requires this plugin runtime')
   const raw = env.MAHIRO_ACTION_CONTEXT || env.HERDR_PLUGIN_CONTEXT_JSON
   if (!raw || Buffer.byteLength(raw) > 8192)
@@ -160,7 +160,7 @@ export const openProjectPicker = (context, call) =>
     'pane',
     'open',
     '--plugin',
-    'mahiro-herdr-sidebar',
+    'mahiro-herdr',
     '--entrypoint',
     'project-actions-picker',
     '--cwd',

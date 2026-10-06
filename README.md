@@ -6,9 +6,9 @@ Mahiro Herdr is the integration umbrella; it is not a replacement Herdr runtime 
 
 ### Identity and existing installations
 
-The display/package name is now **Mahiro Herdr**. The GitHub repository, checkout directory, Herdr plugin ID `mahiro-herdr-sidebar`, executable path, metadata source IDs, and config/recovery directory intentionally remain unchanged in v0.6.0. Mahiro Mods already consumes that plugin ID and config directory. Keeping them stable preserves existing registry ownership, recovery snapshots, normalized caches, and Agy library imports without an uninstall/reinstall migration.
+Since v0.6.0 the product, GitHub repository, package and runtime plugin identity are **Mahiro Herdr / `mahiro-herdr`**. The executable is `bin/mahiro-herdr.mjs`; metadata sources are `mahiro-herdr.usage` and `mahiro-herdr.workspace`; the config/recovery directory is owned by `mahiro-herdr`. Shared display-token names and normalized cache schemas remain unchanged because they are presentation/data contracts, not plugin identity.
 
-The commands below still use the real registered ID, not the display name. Do not install a second `mahiro-herdr` plugin or rename runtime directories manually. A future repository/plugin-ID migration requires explicit approval and a verified consumer/config migration; the display rename is not that migration.
+**Upgrade from v0.5.0 or earlier:** while the old installation and source are still intact, run `herdr plugin uninstall mahiro-herdr-sidebar` to restore its owned configuration and clear old metadata, then install/configure the new plugin using the commands below. Back up config and verify recovery first; do not relabel the old snapshot or run both plugin IDs concurrently. Update custom keybindings, snapshot overrides (`MAHIRO_HERDR_SNAPSHOT`) and Agy producer import paths to the new identity. Mahiro Mods must also be updated and reloaded. Preserve unrelated config, caches and custom statusline output. The GitHub redirect is not a runtime plugin-ID migration.
 
 The package remains `private: true` to prevent accidental npm publication. Distribution uses Herdr's GitHub plugin installer or a local Git clone; this project is not distributed through npm.
 
@@ -27,21 +27,21 @@ The source and isolated test suite support macOS and Linux. Mahiro has verified 
 For a released public version:
 
 ```sh
-herdr plugin install mahirocoko/mahiro-herdr-sidebar --ref v0.6.0
-herdr plugin action invoke configure --plugin mahiro-herdr-sidebar
+herdr plugin install mahirocoko/mahiro-herdr --ref v0.6.0
+herdr plugin action invoke configure --plugin mahiro-herdr
 ```
 
 To remove that installation, use Herdr's owning uninstall flow. Its manifest action restores the saved sidebar configuration before Herdr removes the plugin:
 
 ```sh
-herdr plugin uninstall mahiro-herdr-sidebar
+herdr plugin uninstall mahiro-herdr
 ```
 
 For local development or an unreleased checkout:
 
 ```sh
-git clone https://github.com/mahirocoko/mahiro-herdr-sidebar.git
-cd mahiro-herdr-sidebar
+git clone https://github.com/mahirocoko/mahiro-herdr.git
+cd mahiro-herdr
 npm run check
 ./install.sh
 ```
@@ -149,7 +149,7 @@ The module `src/agy-statusline-producer.mjs` exports pure normalization and atom
 - **Canonical integration seam**: Because Agy statusline commands render stdout directly to the terminal, a silent standalone binary would erase the user's custom statusline. The canonical integration is an import-call inside the user's custom statusline script:
 
 ```javascript
-import { publishAgyStatusline } from '/absolute/path/to/mahiro-herdr-sidebar/src/agy-statusline-producer.mjs'
+import { publishAgyStatusline } from '/absolute/path/to/mahiro-herdr/src/agy-statusline-producer.mjs'
 
 // Receive payload from Agy CLI via stdin:
 const payload = JSON.parse(stdinText)

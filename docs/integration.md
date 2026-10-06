@@ -1,6 +1,6 @@
 # Open adapter integration protocol
 
-Mahiro Herdr provides a read-only Herdr cache adapter (`src/core.mjs`), an optional native Agy statusline quota producer (`src/agy-statusline-producer.mjs`), and a workspace metadata bridge (`src/workspace-metadata.mjs`, v0.4.0+). Its registered plugin ID remains `mahiro-herdr-sidebar`; see the README identity boundary before changing installed configuration.
+Mahiro Herdr provides a read-only Herdr cache adapter (`src/core.mjs`), an optional native Agy statusline quota producer (`src/agy-statusline-producer.mjs`), and a workspace metadata bridge (`src/workspace-metadata.mjs`, v0.4.0+). Since v0.6.0 its canonical registered plugin ID is `mahiro-herdr`; see the README upgrade boundary before migrating an existing installation. Recovery snapshots must not be relabelled to bypass ownership checks.
 
 ## Orca adaptation: ownership and capability boundary
 
@@ -23,9 +23,11 @@ Current evidence checked on 2026-10-05: installed Herdr 0.9.3, bundled public AP
 | Codex/Agy/Cursor normalized usage                      | Existing producer contracts; this project's read-only projection      | Keep provider collection outside adapter ownership. No new provider APIs or credentials.                                                                                                                                |
 | Main executor/browser routing                          | Canonical `mahiro-skills` direct-cli and browser owners               | Herdr-first preference must retain verified Orca compatibility and system-browser QA ownership.                                                                                                                         |
 
-### Rename invariants
+### Identity migration invariants (v0.6.0)
 
-The display/package rename does not change the config owner, usage/workspace sources, registry ID, action IDs, executable/import paths, or config snapshot paths. Mahiro Mods currently uses the exact legacy registry ID for refresh and its config directory for cache-only consumers. Existing recovery/install/uninstall tests continue to bind that same identity and root. No installed config, plugin registration, HOME data or GitHub repository has been migrated by source changes.
+Mahiro explicitly approved the full `mahiro-herdr` identity migration on 2026-10-06, superseding the earlier display-only boundary. The repository/checkout, plugin registry ID, config owner, executable/import paths, event IDs and metadata source IDs now agree on `mahiro-herdr`. Mahiro Mods uses the new plugin ID and config directory for refresh/snapshot detection, with `MAHIRO_HERDR_SNAPSHOT` as its explicit override. Shared display-token names and normalized-cache schemas remain unchanged; action IDs such as `refresh` and `project-actions` still name their jobs.
+
+The transition must restore/clear/detach the old installation while its original source still validates its snapshot, then register and configure the new source. Archive the old recovery material privately; never relabel it to satisfy the new owner. Preserve unrelated user settings (including the selected `symbols` status style), caches and custom statusline rendering. Update/install consumers and reload active Letta sessions: source/install hash parity alone does not prove a loaded generation has adopted the new identity. The README owns public upgrade instructions; GitHub redirects do not migrate runtime registrations.
 
 Future capabilities must have focused owners outside the read-only adapter. The matrix is not authorization to implement every reference feature: remote file viewing, attachments, voice, transcript UI, message queues and new quota presentation remain separately selectable follow-ups.
 
@@ -120,7 +122,7 @@ direction. The installed local project-action binding is:
 [[keys.command]]
 key = "prefix+a"
 type = "plugin_action"
-command = "mahiro-herdr-sidebar.project-actions"
+command = "mahiro-herdr.project-actions"
 description = "Project quick actions"
 ```
 
@@ -131,7 +133,7 @@ adding a new action (uninstalled config example, not a project-command launcher)
 [[keys.command]]
 key = "prefix+alt+r"
 type = "plugin_action"
-command = "mahiro-herdr-sidebar.refresh"
+command = "mahiro-herdr.refresh"
 description = "Refresh Mahiro metadata"
 ```
 
@@ -238,7 +240,7 @@ In Agy CLI, custom `statusLine` commands render their standard output directly t
 Therefore, the canonical integration seam is an import-call inside the user's custom statusline script:
 
 ```javascript
-import { publishAgyStatusline } from '/absolute/path/to/mahiro-herdr-sidebar/src/agy-statusline-producer.mjs'
+import { publishAgyStatusline } from '/absolute/path/to/mahiro-herdr/src/agy-statusline-producer.mjs'
 
 // In custom statusline script receiving Agy payload on stdin:
 const payload = JSON.parse(stdinText)
@@ -274,7 +276,7 @@ The module `src/workspace-metadata.mjs` implements an allowlisted, bounded cross
 
 - Herdr 0.9.1 already renders native Space built-ins `branch` and `git_status`, but public workspace snapshots do not expose their values.
 - This plugin does **NOT** replace native Space rendering. It publishes cross-client workspace tokens for web and remote clients.
-- Canonical source: `mahiro-herdr-sidebar.workspace`.
+- Canonical source: `mahiro-herdr.workspace`.
 - Canonical owned workspace tokens:
   1. `mahiro_workspace_branch`: sanitized/bounded branch name (detached HEAD uses `detached@<short sha>`).
   2. `mahiro_workspace_git_status`: exact `clean` or `dirty`.

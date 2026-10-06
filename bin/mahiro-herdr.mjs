@@ -4,13 +4,13 @@ import {
   configure,
   eventRefresh,
   refresh,
-  restoreConfig,
+  restoreConfig
 } from '../src/core.mjs'
 import {
   configureLive,
   installWorkflow,
   restoreLive,
-  uninstallWorkflow,
+  uninstallWorkflow
 } from '../src/workflows.mjs'
 
 const command = process.argv[2]
@@ -37,7 +37,7 @@ try {
     await uninstallWorkflow(process.argv[3])
   } else {
     throw new Error(
-      'usage: mahiro-herdr-sidebar.mjs <startup|refresh|event|configure|restore|configure-live|restore-live|install ROOT|uninstall-live ROOT>',
+      'usage: mahiro-herdr.mjs <startup|refresh|event|configure|restore|configure-live|restore-live|install ROOT|uninstall-live ROOT>'
     )
   }
 } catch (error) {

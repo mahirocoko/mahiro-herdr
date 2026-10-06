@@ -11,7 +11,7 @@ import {
   sanitizeToken
 } from './runtime-helpers.mjs'
 
-export const WORKSPACE_SOURCE = 'mahiro-herdr-sidebar.workspace'
+export const WORKSPACE_SOURCE = 'mahiro-herdr.workspace'
 export const OWNED_WORKSPACE_TOKENS = [
   'mahiro_workspace_branch',
   'mahiro_workspace_git_status',

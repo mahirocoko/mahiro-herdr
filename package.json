@@ -5,11 +5,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/mahirocoko/mahiro-herdr-sidebar.git"
+    "url": "git+https://github.com/mahirocoko/mahiro-herdr.git"
   },
-  "homepage": "https://github.com/mahirocoko/mahiro-herdr-sidebar#readme",
+  "homepage": "https://github.com/mahirocoko/mahiro-herdr#readme",
   "bugs": {
-    "url": "https://github.com/mahirocoko/mahiro-herdr-sidebar/issues"
+    "url": "https://github.com/mahirocoko/mahiro-herdr/issues"
   },
   "type": "module",
   "engines": {
@@ -17,6 +17,6 @@
   },
   "scripts": {
     "test": "node --test",
-    "check": "node --check bin/mahiro-herdr-sidebar.mjs && node --check bin/mahiro-herdr-actions.mjs && node --check src/project-actions.mjs && node --check src/project-action-manager.mjs && node --check src/terminal-style.mjs && node --check src/core.mjs && node --check src/workflows.mjs && node --check src/agy-statusline-producer.mjs && node --check src/workspace-metadata.mjs && node --check src/runtime-helpers.mjs && node --test"
+    "check": "node --check bin/mahiro-herdr.mjs && node --check bin/mahiro-herdr-actions.mjs && node --check src/project-actions.mjs && node --check src/project-action-manager.mjs && node --check src/terminal-style.mjs && node --check src/core.mjs && node --check src/workflows.mjs && node --check src/agy-statusline-producer.mjs && node --check src/workspace-metadata.mjs && node --check src/runtime-helpers.mjs && node --test"
   }
 }

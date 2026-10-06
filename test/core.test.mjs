@@ -109,13 +109,13 @@ if (args[0] === 'agent' && args[1] === 'list') {
   // Accepted
 } else if (args[0] === 'plugin') {
   const state = JSON.parse(readFileSync(process.env.HERDR_TEST_REGISTRY, 'utf8'))
-  if (args[1] === 'link') state.plugins.push({ id: 'mahiro-herdr-sidebar', root: args[2], enabled: !args.includes('--disabled') })
-  const plugin = state.plugins.find(item => (item.id || item.plugin_id) === 'mahiro-herdr-sidebar')
+  if (args[1] === 'link') state.plugins.push({ id: 'mahiro-herdr', root: args[2], enabled: !args.includes('--disabled') })
+  const plugin = state.plugins.find(item => (item.id || item.plugin_id) === 'mahiro-herdr')
   if (args[1] === 'enable' && plugin) plugin.enabled = true
   if (args[1] === 'disable' && plugin) plugin.enabled = false
   if (args[1] === 'unlink') {
-    state.plugins = state.plugins.filter(item => item.id !== 'mahiro-herdr-sidebar')
-    if (failure?.replacementRoot) state.plugins.push({ id: 'mahiro-herdr-sidebar', root: failure.replacementRoot, enabled: true })
+    state.plugins = state.plugins.filter(item => item.id !== 'mahiro-herdr')
+    if (failure?.replacementRoot) state.plugins.push({ id: 'mahiro-herdr', root: failure.replacementRoot, enabled: true })
   }
   writeFileSync(process.env.HERDR_TEST_REGISTRY, JSON.stringify(state))
 }
@@ -391,7 +391,7 @@ test('every report uses exactly one set-or-clear decision per owned token', asyn
   ], now)
   await refresh(stub.env, { clock: () => now, sequence: () => '500' })
   const report = reportCalls(await calls(stub.log))[0]
-  assert.deepEqual(report.slice(0, 5), ['pane', 'report-metadata', 'w1:p1', '--source', 'mahiro-herdr-sidebar.usage'])
+  assert.deepEqual(report.slice(0, 5), ['pane', 'report-metadata', 'w1:p1', '--source', 'mahiro-herdr.usage'])
   assert.equal(report.filter(value => value === '--token' || value === '--clear-token').length, OWNED_TOKENS.length)
   for (const name of OWNED_TOKENS) {
     const sets = report.filter((value, index) => report[index - 1] === '--token' && String(value).startsWith(`${name}=`)).length
@@ -603,9 +603,9 @@ test('install failures restore configuration and registry transactionally', asyn
 test('install refuses the same plugin ID at a different root without mutation', async () => {
   const setup = await fixture()
   const otherRoot = join(setup.root, 'other-root')
-  const stub = await stubHerdr(setup, [], [{ id: 'mahiro-herdr-sidebar', root: otherRoot, enabled: true }])
+  const stub = await stubHerdr(setup, [], [{ id: 'mahiro-herdr', root: otherRoot, enabled: true }])
   await assert.rejects(installWorkflow(setup.root, stub.env), /different or ambiguous root/u)
-  assert.deepEqual(JSON.parse(await readFile(stub.registry, 'utf8')).plugins, [{ id: 'mahiro-herdr-sidebar', root: otherRoot, enabled: true }])
+  assert.deepEqual(JSON.parse(await readFile(stub.registry, 'utf8')).plugins, [{ id: 'mahiro-herdr', root: otherRoot, enabled: true }])
 })
 
 test('post-mutation link failure is accepted only after exact disabled registration evidence', async () => {
@@ -616,14 +616,14 @@ test('post-mutation link failure is accepted only after exact disabled registrat
 
   const result = await installWorkflow(setup.root, stub.env, { clock: () => Date.now(), sequence: () => '650' })
   assert.equal(result.installed, true)
-  assert.deepEqual(JSON.parse(await readFile(stub.registry, 'utf8')).plugins, [{ id: 'mahiro-herdr-sidebar', root: setup.root, enabled: true }])
-  assert.match(await readFile(setup.herdrConfig, 'utf8'), /mahiro-herdr-sidebar:begin/u)
+  assert.deepEqual(JSON.parse(await readFile(stub.registry, 'utf8')).plugins, [{ id: 'mahiro-herdr', root: setup.root, enabled: true }])
+  assert.match(await readFile(setup.herdrConfig, 'utf8'), /mahiro-herdr:begin/u)
 })
 
 test('install recognizes the live plugin_root registry field for an existing local link', async () => {
   const setup = await fixture()
   await writeFile(setup.herdrConfig, '[theme]\nname = "nord"\n')
-  const stub = await stubHerdr(setup, [], [{ plugin_id: 'mahiro-herdr-sidebar', plugin_root: setup.root, enabled: true }])
+  const stub = await stubHerdr(setup, [], [{ plugin_id: 'mahiro-herdr', plugin_root: setup.root, enabled: true }])
   const result = await installWorkflow(setup.root, stub.env, { clock: () => Date.now(), sequence: () => '650' })
   assert.equal(result.installed, true)
 })
@@ -631,7 +631,7 @@ test('install recognizes the live plugin_root registry field for an existing loc
 test('failed reinstall restores exact prior configured and enabled state', async () => {
   const setup = await fixture()
   await writeFile(setup.herdrConfig, '[theme]\nname = "nord"\n', { mode: 0o640 })
-  const stub = await stubHerdr(setup, [], [{ id: 'mahiro-herdr-sidebar', root: setup.root, enabled: true }])
+  const stub = await stubHerdr(setup, [], [{ id: 'mahiro-herdr', root: setup.root, enabled: true }])
   await configure(stub.env)
   const priorConfig = await readFile(setup.herdrConfig)
   const snapshotPath = join(setup.pluginConfig, 'config-snapshots.json')
@@ -654,7 +654,7 @@ test('post-mutation enable failure is accepted after exact registry postconditio
   const result = await installWorkflow(setup.root, stub.env, { clock: () => Date.now(), sequence: () => '690' })
   assert.equal(result.installed, true)
   assert.equal(JSON.parse(await readFile(stub.registry, 'utf8')).plugins[0].enabled, true)
-  assert.match(await readFile(setup.herdrConfig, 'utf8'), /mahiro-herdr-sidebar:begin/u)
+  assert.match(await readFile(setup.herdrConfig, 'utf8'), /mahiro-herdr:begin/u)
 })
 
 test('final install refresh failure leaves the enabled install committed with warning', async () => {
@@ -667,25 +667,25 @@ test('final install refresh failure leaves the enabled install committed with wa
   assert.equal(result.installed, true)
   assert.equal(warnings.length, 1)
   assert.equal(JSON.parse(await readFile(stub.registry, 'utf8')).plugins[0].enabled, true)
-  assert.match(await readFile(setup.herdrConfig, 'utf8'), /mahiro-herdr-sidebar:begin/u)
+  assert.match(await readFile(setup.herdrConfig, 'utf8'), /mahiro-herdr:begin/u)
 })
 
 test('uninstall reload failure rolls config and prior enabled state back', async () => {
   const setup = await fixture()
   await writeFile(setup.herdrConfig, '[theme]\nname = "nord"\n')
-  const plugin = { id: 'mahiro-herdr-sidebar', root: setup.root, enabled: true }
+  const plugin = { id: 'mahiro-herdr', root: setup.root, enabled: true }
   const stub = await stubHerdr(setup, [], [plugin])
   await configure(stub.env)
   await writeFile(stub.failures, JSON.stringify([{ needle: 'server reload-config', remaining: 1 }]))
   await assert.rejects(uninstallWorkflow(setup.root, stub.env, { clock: () => Date.now(), sequence: () => '800' }))
   assert.equal(JSON.parse(await readFile(stub.registry, 'utf8')).plugins[0].enabled, true)
-  assert.match(await readFile(setup.herdrConfig, 'utf8'), /mahiro-herdr-sidebar:begin/u)
+  assert.match(await readFile(setup.herdrConfig, 'utf8'), /mahiro-herdr:begin/u)
 })
 
 test('post-mutation disable failure is accepted after exact registry postcondition', async () => {
   const setup = await fixture()
   await writeFile(setup.herdrConfig, '[theme]\nname = "nord"\n')
-  const stub = await stubHerdr(setup, [], [{ id: 'mahiro-herdr-sidebar', root: setup.root, enabled: true }])
+  const stub = await stubHerdr(setup, [], [{ id: 'mahiro-herdr', root: setup.root, enabled: true }])
   await configure(stub.env)
   await writeFile(stub.failures, JSON.stringify([{ needle: 'plugin disable', remaining: 1, afterMutation: true }]))
 
@@ -698,16 +698,16 @@ test('post-mutation disable failure is accepted after exact registry postconditi
 test('uninstall refuses an old checkout before disable or config mutation', async () => {
   const setup = await fixture()
   const currentRoot = join(setup.root, 'current-checkout')
-  const stub = await stubHerdr(setup, [], [{ id: 'mahiro-herdr-sidebar', root: currentRoot, enabled: true }])
+  const stub = await stubHerdr(setup, [], [{ id: 'mahiro-herdr', root: currentRoot, enabled: true }])
   await assert.rejects(uninstallWorkflow(setup.root, stub.env), /different or ambiguous root/u)
   assert.deepEqual(await calls(stub.log), [['plugin', 'list', '--json']])
-  assert.deepEqual(JSON.parse(await readFile(stub.registry, 'utf8')).plugins, [{ id: 'mahiro-herdr-sidebar', root: currentRoot, enabled: true }])
+  assert.deepEqual(JSON.parse(await readFile(stub.registry, 'utf8')).plugins, [{ id: 'mahiro-herdr', root: currentRoot, enabled: true }])
 })
 
 test('unlink failure with same-root registration restores exact prior state', async () => {
   const setup = await fixture()
   await writeFile(setup.herdrConfig, '[theme]\nname = "nord"\n', { mode: 0o640 })
-  const stub = await stubHerdr(setup, [], [{ id: 'mahiro-herdr-sidebar', root: setup.root, enabled: true }])
+  const stub = await stubHerdr(setup, [], [{ id: 'mahiro-herdr', root: setup.root, enabled: true }])
   await configure(stub.env)
   const priorConfig = await readFile(setup.herdrConfig)
   const snapshotPath = join(setup.pluginConfig, 'config-snapshots.json')
@@ -724,7 +724,7 @@ test('unlink failure with same-root registration restores exact prior state', as
 test('unlink reported failure is success when registry postcondition is absent', async () => {
   const setup = await fixture()
   await writeFile(setup.herdrConfig, '[theme]\nname = "nord"\n')
-  const stub = await stubHerdr(setup, [], [{ id: 'mahiro-herdr-sidebar', root: setup.root, enabled: true }])
+  const stub = await stubHerdr(setup, [], [{ id: 'mahiro-herdr', root: setup.root, enabled: true }])
   await configure(stub.env)
   await writeFile(stub.failures, JSON.stringify([{ needle: 'plugin unlink', remaining: 1, afterMutation: true }]))
 
@@ -738,21 +738,21 @@ test('unlink failure with another-root postcondition makes no recovery mutation'
   const setup = await fixture()
   await writeFile(setup.herdrConfig, '[theme]\nname = "nord"\n')
   const otherRoot = join(setup.root, 'replacement-checkout')
-  const stub = await stubHerdr(setup, [], [{ id: 'mahiro-herdr-sidebar', root: setup.root, enabled: true }])
+  const stub = await stubHerdr(setup, [], [{ id: 'mahiro-herdr', root: setup.root, enabled: true }])
   await configure(stub.env)
   await writeFile(stub.failures, JSON.stringify([{ needle: 'plugin unlink', remaining: 1, afterMutation: true, replacementRoot: otherRoot }]))
 
   await assert.rejects(uninstallWorkflow(setup.root, stub.env, { clock: () => Date.now(), sequence: () => '840' }), /recovery refused before mutation/u)
   const entries = await calls(stub.log)
-  assert.deepEqual(entries.slice(-3), [['plugin', 'unlink', 'mahiro-herdr-sidebar'], ['plugin', 'list', '--json'], ['plugin', 'list', '--json']])
-  assert.deepEqual(JSON.parse(await readFile(stub.registry, 'utf8')).plugins, [{ id: 'mahiro-herdr-sidebar', root: otherRoot, enabled: true }])
+  assert.deepEqual(entries.slice(-3), [['plugin', 'unlink', 'mahiro-herdr'], ['plugin', 'list', '--json'], ['plugin', 'list', '--json']])
+  assert.deepEqual(JSON.parse(await readFile(stub.registry, 'utf8')).plugins, [{ id: 'mahiro-herdr', root: otherRoot, enabled: true }])
   assert.equal(await readFile(setup.herdrConfig, 'utf8'), '[theme]\nname = "nord"\n')
 })
 
 test('restore action does not disable or unlink its own running plugin', async () => {
   const setup = await fixture()
   await writeFile(setup.herdrConfig, '[theme]\nname = "nord"\n')
-  const stub = await stubHerdr(setup, [], [{ id: 'mahiro-herdr-sidebar', root: setup.root, enabled: true }])
+  const stub = await stubHerdr(setup, [], [{ id: 'mahiro-herdr', root: setup.root, enabled: true }])
   await configure(stub.env)
   const result = await restoreLive(stub.env, { clock: () => Date.now(), sequence: () => '850' })
   assert.equal(result.restored, true)

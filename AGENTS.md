@@ -1,6 +1,6 @@
 # Repository contract
 
-The current product/display name is **Mahiro Herdr**, the integration umbrella. The repository URL/directory and runtime plugin ID `mahiro-herdr-sidebar` remain intentionally stable because live consumers and configuration recovery refer to them. Do not globally replace that identifier or mutate installed config as part of a display rename. Current capability ownership and the approved Orca adaptation scope live in `docs/integration.md`.
+The canonical product, repository and runtime plugin identity is **Mahiro Herdr / `mahiro-herdr`**. Mahiro explicitly approved the complete identity migration on 2026-10-06. Executable, metadata sources, config ownership and consumers must agree with this identity. Old installations require an explicit uninstall/reinstall transition while the old source can still restore its own recovery snapshot. Keep shared display-token/cache schemas intact; do not conflate product identity with sidebar presentation roles. Current capability ownership lives in `docs/integration.md`.
 
 This is an MIT-licensed, dependency-free repository providing a read-only Herdr adapter (`src/core.mjs`), an optional Agy-native statusline quota producer (`src/agy-statusline-producer.mjs`), and a workspace metadata bridge (`src/workspace-metadata.mjs`).
 
@@ -10,7 +10,7 @@ This is an MIT-licensed, dependency-free repository providing a read-only Herdr 
   - `src/core.mjs` is strictly a read-only cache adapter for Herdr. It projects normalized cache files and coordinates lifecycle refresh.
   - `src/agy-statusline-producer.mjs` is an optional consumer of already-delivered Agy CLI statusline payloads (`quota` map).
   - `src/workspace-metadata.mjs` is a focused separate module providing a bounded, allowlisted cross-client projection for Herdr Web without replacing native Space rendering.
-- Canonical source for workspace metadata is `mahiro-herdr-sidebar.workspace`.
+- Canonical source for workspace metadata is `mahiro-herdr.workspace`.
 - Canonical owned workspace tokens: `mahiro_workspace_branch`, `mahiro_workspace_git_status`, `mahiro_workspace_worktree`.
 - Workspace token values: sanitized/bounded branch name (detached uses `detached@<short sha>`), exact `clean` or `dirty`, and a bounded linked-worktree label without leaking absolute paths; clear every owned token when workspace/repository evidence is unavailable or ambiguous.
 - Never read pane contents, transcripts, sessions, credentials, email, plan tier, or raw provider payloads, never invoke `agy -p`, and make no network requests.
