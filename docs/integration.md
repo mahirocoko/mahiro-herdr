@@ -1,6 +1,154 @@
 # Open adapter integration protocol
 
-Mahiro Herdr Sidebar provides a read-only Herdr cache adapter (`src/core.mjs`), an optional native Agy statusline quota producer (`src/agy-statusline-producer.mjs`), and a workspace metadata bridge (`src/workspace-metadata.mjs`, v0.4.0+).
+Mahiro Herdr provides a read-only Herdr cache adapter (`src/core.mjs`), an optional native Agy statusline quota producer (`src/agy-statusline-producer.mjs`), and a workspace metadata bridge (`src/workspace-metadata.mjs`, v0.4.0+). Its registered plugin ID remains `mahiro-herdr-sidebar`; see the README identity boundary before changing installed configuration.
+
+## Orca adaptation: ownership and capability boundary
+
+Current evidence checked on 2026-10-05: installed Herdr 0.9.3, bundled public API protocol 22/schema 1, plugin manifest action contract, and existing Mahiro consumers. This is an implementation boundary, not proof of new rendered behavior.
+
+| Contract                                               | Current owner                                                         | Integration disposition                                                                                                                                                                                                 |
+| ------------------------------------------------------ | --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Space/project/worktree inventory and grouping          | Herdr workspace/worktree runtime and native TUI                       | Use authoritative identities. The metadata bridge may publish bounded Git facts, not invent repository/worktree topology.                                                                                               |
+| Working animation and attention                        | Herdr native TUI/status aggregation; agent-specific runtime reporters | Keep Agents anatomy. Native spinner rendering is not a plugin-provided widget API. Space/Tab attention aggregates may prioritize unseen completion over working; any current-activity summary must be separately named. |
+| Branch/dirty/linked-worktree metadata for Web          | `src/workspace-metadata.mjs`                                          | Already implemented; shared allowlisted tokens remain stable.                                                                                                                                                           |
+| Rename/create/close tabs                               | Herdr `tab.rename`, `tab.create`, `tab.close`                         | Public operations exist; Web must extend its typed/authenticated/target-fenced mutation boundary rather than dispatch arbitrary RPC.                                                                                    |
+| Reorder tabs                                           | Herdr `tab.move`                                                      | Public API exists even though the installed tab CLI help has no move command. Reordering is not moving a tab into a split.                                                                                              |
+| Split/move panes                                       | Herdr `pane.split`, `pane.move`, `pane.swap`                          | Pane operations exist. Map exact destination and ownership before presenting an Orca-style move-to-split action.                                                                                                        |
+| Pin/color tabs and native tab context-menu replacement | Herdr native TUI                                                      | No corresponding pin/color request contract or plugin UI-extension contract established in the inspected public schema/manifest. Do not claim support or patch upstream implicitly.                                     |
+| Close others/left/right                                | Composition over Herdr tab inventory/close operations                 | No atomic bulk-close contract established. Freeze membership, confirm destructive scope and handle partial/unknown results before offering these actions; not a repeated close loop over a changing snapshot.           |
+| Native project commands                                | Herdr server `[[keys.command]]`; project script owner                 | Declared project-actions action opens a native terminal picker; selected commands open new tabs in the same workspace. Mahiro approved a local prefix+a binding; native interaction acceptance remains pending.         |
+| Agent launch                                           | Herdr agent/pane runtime                                              | Keep executable/argv and draft-fill commands distinct. Agent launcher integration is planned, not implemented by the metadata adapter.                                                                                  |
+| Editable custom actions and key presets                | Herdr Web                                                             | Existing repo catalog is read-only draft-fill evidence. Personal action storage, validated keys, UI lifecycle and target/auth/lease checks belong to Web, not the quota adapter.                                        |
+| Letta lifecycle/model/context                          | Mahiro Mods                                                           | Preserve native lifecycle authority and existing `mahiro_sidebar_*` producer ownership.                                                                                                                                 |
+| Codex/Agy/Cursor normalized usage                      | Existing producer contracts; this project's read-only projection      | Keep provider collection outside adapter ownership. No new provider APIs or credentials.                                                                                                                                |
+| Main executor/browser routing                          | Canonical `mahiro-skills` direct-cli and browser owners               | Herdr-first preference must retain verified Orca compatibility and system-browser QA ownership.                                                                                                                         |
+
+### Rename invariants
+
+The display/package rename does not change the config owner, usage/workspace sources, registry ID, action IDs, executable/import paths, or config snapshot paths. Mahiro Mods currently uses the exact legacy registry ID for refresh and its config directory for cache-only consumers. Existing recovery/install/uninstall tests continue to bind that same identity and root. No installed config, plugin registration, HOME data or GitHub repository has been migrated by source changes.
+
+Future capabilities must have focused owners outside the read-only adapter. The matrix is not authorization to implement every reference feature: remote file viewing, attachments, voice, transcript UI, message queues and new quota presentation remain separately selectable follow-ups.
+
+### Native command audit (2026-10-06)
+
+Terminal management is now owned by `src/project-action-manager.mjs`: Escape
+cancellation, Add/Edit/Delete with explicit confirmation, an empty-project entry
+state, literal argv command parsing, exact-byte conflict checks and atomic
+project-catalog saves under a PID-plus-nonce directory lock. The CLI revalidates
+the frozen project/workspace before each save. Management never executes commands
+and does not alter HOME bindings. Malformed/symlinked catalogs remain blocking
+errors, not permission to overwrite. This completes the terminal manager scope,
+not the graphical editor or native + New Tab extension described below.
+
+**Latest requested entry/management surface:** Mahiro wants to create/edit project
+quick actions through GUI and select them from native **+ New Tab**. The accepted
+standalone terminal picker and JSON catalog are a working launch proof, not that
+GUI. In Herdr 0.9.3, `src/client/shell/mouse.rs` maps the plus button directly to
+the core `NewTab` action; the inspected public/plugin contracts do not expose
+injection into that chooser or a native non-terminal action editor. Such a change
+requires a separately approved upstream extension, not a fabricated plugin API.
+
+The first live shortcut reached the plugin but failed because popup open forbids
+explicit workspace/pane targeting (`overlay and popup plugin panes target the
+active pane`). The opener now omits those parameters and preserves the original
+project/workspace/pane solely in its bounded, revalidated context env. Focused
+launcher tests passed 14/14 after correction; Mahiro subsequently reported that
+the corrected native entry appeared to work. Later Manage/color interaction and
+visual acceptance remain pending. This still does not fulfill the GUI request.
+
+**Current human direction:** project/workspace-specific actions open a **new tab
+in that same workspace** and run from the project root. Popup-only checks do not
+satisfy this outcome. The opt-in prototype is `src/project-actions.mjs` plus
+`bin/mahiro-herdr-actions.mjs`, with a project-owned `.herdr-actions.json` catalog
+and a plain terminal picker. It uses `tab create`, validates the returned new
+pane and its shell process, submits once with `pane run`, then focuses the tab.
+The manifest now declares `project-actions` and the `project-actions-picker`
+popup entrypoint. This is a native plugin action/terminal surface, not a new
+non-terminal widget or dynamic workspace menu API. The opener passes frozen
+original project/workspace/pane context; the popup does not have its own pane ID.
+Mahiro accepted the standalone picker and approved the local `prefix+a` binding.
+The config and recovery snapshot were backed up, only the applied snapshot was
+extended, config validation and server reload passed, and the original uninstall
+bytes remain unchanged. Native shortcut/popup interaction acceptance is still
+human-owned; source/config checks do not establish it.
+
+Live bounded proof on Herdr 0.9.3 opened tab `w7S:t2` in workspace `w7S` and
+ran this project's Test action; all 100 tests passed and the terminal remained
+available. The first launcher report exposed a CLI acknowledgement mismatch:
+`pane run` succeeds silently rather than returning JSON. The client now accepts
+silent exit-status success only for `pane run` and `tab focus`, while creation
+and inventory still require JSON receipts. A subsequent single harmless printf
+in new tab `w7S:t3` verified the corrected launcher and exact output without
+resubmitting either command. Focused checks after that correction passed 12/12
+(including rename identity); this is not a claim of a rerun full 101-test suite
+or native popup acceptance. That proof preceded the native entrypoint addition.
+
+Native Herdr commands are not Herdr Web's browser-local actions. The installed
+Herdr 0.9.3 CLI, bundled protocol 22/schema 1, and version-pinned upstream sources
+establish these owners:
+
+- Server configuration owns `[[keys.command]]`: `shell` runs detached, `pane`
+  opens a temporary zoomed pane that closes on exit, `popup` opens a session-modal
+  terminal, and `plugin_action` invokes a declared plugin action. `description`
+  supplies the keybind-help label; this does not prove a separately named native
+  "Quick Commands" menu or editable command catalog.
+- Plugin manifests own static actions with argv arrays and optional contexts
+  (`global`, `workspace`, `tab`, `pane`, `selection`). Runtime action registration
+  and native non-terminal plugin UI are explicitly outside plugin v1.
+- `command.invoke` accepts an opaque endpoint-issued ID from the client-shell
+  projection, not an arbitrary shell command or a caller-invented command ID.
+  Upstream rejects stale IDs and inconsistent workspace/tab/pane targets.
+- Custom key commands receive `HERDR_ACTIVE_*` target variables; plugin actions
+  instead receive `HERDR_PLUGIN_CONTEXT_JSON` and available `HERDR_WORKSPACE_ID`,
+  `HERDR_TAB_ID`, `HERDR_PANE_ID`. Plugin commands start in the plugin directory,
+  not necessarily the selected project. Do not conflate these environment owners.
+- `herdr pane run <pane-id> <command>` sends text and Enter atomically. It is not
+  process execution with an idle-shell guarantee. Existing-terminal execution
+  requires an explicitly selected, confirmed shell target; never send a project
+  command to the currently focused agent merely because it has a pane ID.
+- `herdr tab create --workspace <workspace-id> --cwd <absolute-project-path>
+--no-focus` and `herdr pane split <pane-id> --cwd <absolute-project-path>
+--no-focus` can create a terminal and return its identity. A future launcher
+  must use that returned identity, handle unknown launch outcomes without blind
+  retries, and not close a terminal it did not create.
+
+This repository currently defines `test` and `check`, not `dev` or `build`.
+The previous popup-only Check example is superseded by the new-tab action
+direction. The installed local project-action binding is:
+
+```toml
+[[keys.command]]
+key = "prefix+a"
+type = "plugin_action"
+command = "mahiro-herdr-sidebar.project-actions"
+description = "Project quick actions"
+```
+
+An existing metadata action can independently be bound without
+adding a new action (uninstalled config example, not a project-command launcher):
+
+```toml
+[[keys.command]]
+key = "prefix+alt+r"
+type = "plugin_action"
+command = "mahiro-herdr-sidebar.refresh"
+description = "Refresh Mahiro metadata"
+```
+
+These keys are examples, not a claim that they are free in a user's configuration.
+Validate a copied configuration with `HERDR_CONFIG_PATH` pointing to an isolated
+fixture and `herdr config check`; validation does not execute the command or prove
+rendered popup behavior. Applying bindings to HOME, reloading the live server,
+or adding manifest actions at the registered source root requires a separate
+live-change decision. No dev/build command, dynamic native command editor,
+native UI widget, or rendered Quick Commands acceptance is claimed here.
+
+Version-pinned evidence:
+
+- [Configuration and execution modes](https://raw.githubusercontent.com/herdrdev/herdr/v0.9.3/docs/next/website/src/content/docs/configuration.mdx)
+- [Plugin v1 declaration and environment boundary](https://raw.githubusercontent.com/herdrdev/herdr/v0.9.3/docs/next/website/src/content/docs/plugins.mdx)
+- [Endpoint command IDs and target validation](https://github.com/herdrdev/herdr/blob/v0.9.3/src/app/custom_commands.rs)
+- [Public command request schema](https://github.com/herdrdev/herdr/blob/v0.9.3/src/api/schema/commands.rs)
 
 The core adapter never contacts a provider, never reads credentials, and only projects normalized cache snapshots into Herdr agent rows. Quota snapshots are written to disk by an external integration implementing this protocol directly or calling one of the repository helpers, and pane identity/tokens determine eligible panes.
 

@@ -1,7 +1,17 @@
 #!/usr/bin/env node
 
-import { configure, eventRefresh, refresh, restoreConfig } from '../src/core.mjs'
-import { configureLive, installWorkflow, restoreLive, uninstallWorkflow } from '../src/workflows.mjs'
+import {
+  configure,
+  eventRefresh,
+  refresh,
+  restoreConfig,
+} from '../src/core.mjs'
+import {
+  configureLive,
+  installWorkflow,
+  restoreLive,
+  uninstallWorkflow,
+} from '../src/workflows.mjs'
 
 const command = process.argv[2]
 
@@ -20,12 +30,17 @@ try {
     await restoreLive()
   } else if (command === 'install' && process.argv[3]) {
     await installWorkflow(process.argv[3])
-  } else if ((command === 'uninstall-live' || command === 'uninstall') && process.argv[3]) {
+  } else if (
+    (command === 'uninstall-live' || command === 'uninstall') &&
+    process.argv[3]
+  ) {
     await uninstallWorkflow(process.argv[3])
   } else {
-    throw new Error('usage: mahiro-herdr-sidebar.mjs <startup|refresh|event|configure|restore|configure-live|restore-live|install ROOT|uninstall-live ROOT>')
+    throw new Error(
+      'usage: mahiro-herdr-sidebar.mjs <startup|refresh|event|configure|restore|configure-live|restore-live|install ROOT|uninstall-live ROOT>',
+    )
   }
 } catch (error) {
-  console.error(`mahiro-herdr-sidebar: ${error.message}`)
+  console.error(`mahiro-herdr: ${error.message}`)
   process.exitCode = 1
 }

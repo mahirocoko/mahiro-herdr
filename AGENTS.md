@@ -1,5 +1,7 @@
 # Repository contract
 
+The current product/display name is **Mahiro Herdr**, the integration umbrella. The repository URL/directory and runtime plugin ID `mahiro-herdr-sidebar` remain intentionally stable because live consumers and configuration recovery refer to them. Do not globally replace that identifier or mutate installed config as part of a display rename. Current capability ownership and the approved Orca adaptation scope live in `docs/integration.md`.
+
 This is an MIT-licensed, dependency-free repository providing a read-only Herdr adapter (`src/core.mjs`), an optional Agy-native statusline quota producer (`src/agy-statusline-producer.mjs`), and a workspace metadata bridge (`src/workspace-metadata.mjs`).
 
 - Use Node 22+ built-ins only and keep modules small.
@@ -32,3 +34,15 @@ This is an MIT-licensed, dependency-free repository providing a read-only Herdr 
 - Agy statusline producer integration is library import-call to preserve custom rendered statusline stdout.
 - Cursor Agent `2026.09.23-86fc751` statusline payloads do not contain account usage. Do not present Cursor statusline or hooks as the quota source; Agent Halo's existing direct provider integration owns collection.
 - Tests must isolate HOME, cache, Herdr configuration, and use a stub Herdr executable.
+
+## Project action prototype
+
+- `src/terminal-style.mjs` owns theme-relative ANSI roles. Never persist escape codes in project catalogs or JSON output; disable paint for non-TTY streams, `TERM=dumb` and any `NO_COLOR` presence. Keep backgrounds/body text inherited and meaning explicit in labels. ANSI slot ownership does not prove resolved contrast or human visual acceptance.
+
+- `src/project-action-manager.mjs` owns terminal Manage (add/edit/delete with confirmation) and Escape cancellation. No command runs while managing. Missing catalogs start empty; malformed/unsafe catalogs must not be overwritten. Persist with a PID-plus-nonce directory lock, exact-byte drift checks, bounded schema validation and atomic rename. Stale/ambiguous locks fail closed; do not reclaim by age. Revalidate the original caller project/workspace before each save. IDs remain stable while editing title/argv.
+
+- `src/project-actions.mjs` and `bin/mahiro-herdr-actions.mjs` own the terminal picker and new-tab launcher, separate from the read-only metadata adapter. The manifest declares native action `project-actions` and popup entrypoint `project-actions-picker`; the popup is only the selector, selected commands always open new tabs. The current native feature requires Herdr 0.9.3.
+- `.herdr-actions.json` at the caller pane's Git project root owns versioned actions (`id`, `title`, `argv`). This is executable project-authored configuration: never infer commands, auto-run a catalog, or put credentials in argv. Different projects may use different package managers and scripts.
+- Resolve project/workspace from the runtime-backed caller pane, revalidate before creation, create a background tab in the exact same workspace, and send a quoted command only to its returned new pane after bounded shell readiness. Do not send commands to an existing agent or user terminal.
+- Native popup processes have no pane ID: use the action's frozen `MAHIRO_ACTION_CONTEXT` to revalidate the original project/workspace/pane rather than falling back to the plugin checkout or whatever pane is now focused. This is cooperative local invocation context, not an anti-spoof security credential.
+- No automatic tab close, retry after unknown create/submit outcomes, native widget APIs, provider calls, pane transcript reads, or lifecycle/metadata writes belong to this launcher. Process inspection is limited to the created terminal's readiness; listing and invocation use supported Herdr CLI wrappers. HOME binding changes need explicit approval, exact backups, the existing config lock, validation and alignment of only the applied recovery snapshot; preserve original uninstall bytes.

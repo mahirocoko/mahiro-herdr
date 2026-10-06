@@ -1,4 +1,6 @@
 node_modules/
+.herdr-actions.lock/
+.herdr-actions-*.tmp
 .letta/
 .DS_Store
 *.log

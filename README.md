@@ -1,12 +1,20 @@
-# Mahiro Herdr Sidebar
+# Mahiro Herdr
 
 MIT-licensed open adapter that projects normalized external usage snapshots into Herdr's Agent sidebar, provides an optional native Agy statusline quota producer module, and publishes workspace Git metadata for Herdr Web. It uses Node.js built-ins only, has no package dependencies, and does not contact providers.
+
+Mahiro Herdr is the integration umbrella; it is not a replacement Herdr runtime or a merged web app. Sidebar projection, workspace metadata, and future supported desktop actions have separate owners. Herdr Web remains a separate project, Mahiro Mods owns Letta lifecycle reporting, and Agent Halo owns Cursor quota collection.
+
+### Identity and existing installations
+
+The display/package name is now **Mahiro Herdr**. The GitHub repository, checkout directory, Herdr plugin ID `mahiro-herdr-sidebar`, executable path, metadata source IDs, and config/recovery directory intentionally remain unchanged in this local development change. Mahiro Mods already consumes that plugin ID and config directory. Keeping them stable preserves existing registry ownership, recovery snapshots, normalized caches, and Agy library imports without an uninstall/reinstall migration.
+
+The commands below still use the real registered ID, not the display name. Do not install a second `mahiro-herdr` plugin or rename runtime directories manually. A future repository/plugin-ID migration requires explicit approval and a verified consumer/config migration; the display rename is not that migration.
 
 The package remains `private: true` to prevent accidental npm publication. Distribution uses Herdr's GitHub plugin installer or a local Git clone; this project is not distributed through npm.
 
 ## Prerequisites and support boundary
 
-- [Herdr](https://herdr.dev) 0.9.0 or newer
+- [Herdr](https://herdr.dev) 0.9.3 or newer for the current native project-action manifest
 - Node.js 22 or newer
 - macOS or Linux
 - An external cache producer that implements the open adapter protocol, the optional native Agy statusline producer module, or the workspace metadata bridge
@@ -50,6 +58,60 @@ The uninstall script passes its invoking checkout root to the workflow. Before d
 
 ## Architecture and boundary separation
 
+### Opt-in project actions prototype (unreleased)
+
+Project-specific quick actions now have a plain terminal picker, not a native
+menu extension. From a normal Herdr terminal in this Git project, run:
+
+```sh
+node bin/mahiro-herdr-actions.mjs
+```
+
+Choose **Check** or **Test**. The launcher opens a new tab in the caller's same
+workspace, runs the configured argv from the project root, focuses the new tab,
+and retains it after completion. It never submits commands to the caller's
+existing terminal. Enter on an empty picker answer cancels without creating a tab.
+Escape also cancels the picker. Press **M** for Manage: **A** adds, **E** edits a
+listed action's title/command, **D** deletes with explicit `yes` confirmation,
+and **B** returns to the picker. Escape cancels an unfinished draft; no save or
+command execution occurs. Add/Edit also show the exact argv and require `yes`
+before saving. IDs stay stable on edits. Commands accept executable arguments
+with quoted values, not shell pipes, redirects or variable expansion.
+Projects without a catalog show an empty state and let Manage create their first
+action. A concurrent file edit refuses to overwrite it; reopen the picker to
+load the new state. The editor is terminal UI, not a native graphical editor.
+For inspection only, use `node bin/mahiro-herdr-actions.mjs --list`; an explicit
+action ID such as `check` skips the picker but still validates the target.
+`node bin/mahiro-herdr-actions.mjs --manage` opens Manage directly.
+
+TTY presentation uses the terminal's ANSI palette: yellow action shortcuts,
+gray secondary command/ID text, green save feedback and red delete/error cues.
+Body text and backgrounds remain theme-owned. Redirected output, `TERM=dumb`
+and any `NO_COLOR` value (including empty) disable styling. Color supplements
+explicit labels; exact contrast depends on the terminal theme and is not
+claimed from ANSI codes alone.
+
+The project owns its `.herdr-actions.json` file. Use version `1` and an `actions`
+array containing unique `id`, readable `title`, and non-empty `argv` arrays.
+Commands are trusted executable configuration, not downloaded suggestions.
+No Dev/Build command is invented for this repo, and there is no native
+per-workspace action editor yet.
+Launching can succeed before a response is lost: if an error names a retained
+tab/pane, inspect that exact target before retrying; the prototype never retries
+or closes tabs automatically. See the integration protocol for the native boundary.
+
+The manifest now declares **Project quick actions** (`project-actions`) and a
+native popup terminal picker (`project-actions-picker`). The popup only selects
+an action; commands still execute in new tabs, never in the popup or an existing
+agent pane. The opener freezes the original project/pane/workspace context so a
+popup without a pane ID cannot accidentally use the plugin's checkout.
+
+Mahiro's local binding is **Ctrl+B, then A** (`prefix+a`). It was explicitly
+approved and applied with config/snapshot backups and validated reload. It is
+not installed automatically for other users. The standalone picker was accepted
+by Mahiro, who subsequently reported the corrected native entry appeared to work.
+The later Manage and color additions still need his full interaction/visual check.
+
 This repository provides three distinct components:
 
 1. **Read-only Herdr Adapter (`src/core.mjs`)**: The core plugin runtime. It reads normalized `codex.json`, `agy.json`, and `cursor.json` cache files and projects them into Herdr agent sidebar rows. It never writes to cache files, never collects provider data, and makes no network requests.
@@ -70,7 +132,7 @@ External producers own their collection and normalization. The optional Agy help
 
 Codex and Agy snapshots remain usable for five minutes. Cursor snapshots remain usable for 65 minutes, covering Agent Halo's configurable maximum 60-minute usage refresh cadence plus delivery headroom while its desktop renderer is running, without adding another poller. If Agent Halo is not running or refresh fails, the cache expires and Cursor rows clear.
 
-Cursor quota support requires Mahiro Herdr Sidebar v0.5.0+ and Agent Halo v0.1.15+ as the trusted producer.
+Cursor quota support requires Mahiro Herdr v0.5.0+ (released under the Mahiro Herdr Sidebar name) and Agent Halo v0.1.15+ as the trusted producer.
 
 See [Open adapter integration protocol](docs/integration.md) for the exact JSON schema, milliseconds/percentage units, accepted labels, freshness and reset margins, pane-token contract, and fail-closed rules.
 

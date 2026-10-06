@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "actions": [
+    {
+      "id": "check",
+      "title": "Check",
+      "argv": [
+        "npm",
+        "run",
+        "check"
+      ]
+    },
+    {
+      "id": "test",
+      "title": "Test",
+      "argv": [
+        "npm",
+        "test"
+      ]
+    }
+  ]
+}
