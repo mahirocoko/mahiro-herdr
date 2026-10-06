@@ -10,10 +10,14 @@ import {
   OWNED_WORKSPACE_TOKENS,
   WORKSPACE_SOURCE,
   WORKSPACE_TTL_MS,
+  attributePortsToWorkspaces,
   clearWorkspaceMetadata,
+  collectWorkspacePorts,
   dedupeWorkspaces,
   determineWorkspaceRepository,
   inspectGitRepository,
+  parseLsofOutput,
+  parsePsOutput,
   parseSnapshotWorkspaces,
   reconcileWorkspaces,
   workspaceMetadataArgs
@@ -97,6 +101,8 @@ if (args[0] === 'agent' && args[1] === 'list') {
   // Accepted
 } else if (args[0] === 'pane' && args[1] === 'report-metadata') {
   // Accepted
+} else if (args[0] === 'pane' && args[1] === 'process-info') {
+  process.stdout.write(JSON.stringify({ result: { process_info: { shell_pid: 12345 } } }))
 } else if (args[0] === 'plugin' && args[1] === 'list') {
   process.stdout.write(readFileSync(process.env.HERDR_TEST_REGISTRY, 'utf8'))
 }
@@ -415,12 +421,13 @@ test('sanitization: control characters and whitespace in branch name are strippe
 // -------------------------------------------------------------
 
 test('all-token set-or-clear: every report contains exactly one decision per owned token', () => {
-  // Case A: Linked worktree (all 3 set)
+  // Case A: Linked worktree (all 4 set)
   const argsLinked = workspaceMetadataArgs('w1', {
     branch: 'main',
     gitStatus: 'clean',
     isLinked: true,
-    worktreeLabel: 'my-wt'
+    worktreeLabel: 'my-wt',
+    ports: 'Ports 5173'
   }, '1', Date.now(), 60000)
 
   assert.equal(argsLinked[0], 'workspace')
@@ -436,7 +443,7 @@ test('all-token set-or-clear: every report contains exactly one decision per own
     assert.equal(sets, 1, `Token ${name} should be set in linked state`)
   }
 
-  // Case B: Non-linked repo (branch + status set, worktree cleared)
+  // Case B: Non-linked repo (branch + status set, worktree + ports cleared)
   const argsStandard = workspaceMetadataArgs('w1', {
     branch: 'main',
     gitStatus: 'dirty',
@@ -448,8 +455,8 @@ test('all-token set-or-clear: every report contains exactly one decision per own
     const sets = argsStandard.filter((val, idx) => argsStandard[idx - 1] === '--token' && String(val).startsWith(`${name}=`)).length
     const clears = argsStandard.filter((val, idx) => argsStandard[idx - 1] === '--clear-token' && val === name).length
     assert.equal(sets + clears, 1, `Token ${name} must have exactly 1 decision in standard state`)
-    if (name === 'mahiro_workspace_worktree') {
-      assert.equal(clears, 1, 'worktree token should be cleared in non-linked repo')
+    if (name === 'mahiro_workspace_worktree' || name === 'mahiro_workspace_ports') {
+      assert.equal(clears, 1, `${name} should be cleared in non-linked repo when not provided`)
     } else {
       assert.equal(sets, 1, `${name} should be set in standard repo`)
     }
@@ -1003,4 +1010,331 @@ test('shared runtime helpers re-exported identically from core for backwards com
   assert.equal(core.INVOCATION_DEADLINE_MS, runtime.INVOCATION_DEADLINE_MS)
   assert.equal(core.MAX_OUTPUT_BYTES, runtime.MAX_OUTPUT_BYTES)
   assert.equal(core.MAX_U64, runtime.MAX_U64)
+})
+
+// -------------------------------------------------------------
+// 9. Listening TCP Ports per Herdr Space Tests
+// -------------------------------------------------------------
+
+test('ports: reject cwd-only matching and attribute strictly via process tree', () => {
+  const shellPidToWorkspace = new Map([[100, 'w1']])
+  // PID 200 is running in the same directory, but its parent is init (1), not descendant of shell PID 100
+  const pidToPpid = new Map([[200, 1]])
+  const pidToPorts = new Map([[200, new Set([8000])]])
+
+  const result = attributePortsToWorkspaces(pidToPorts, pidToPpid, shellPidToWorkspace, { kill: () => true })
+  assert.equal(result.size, 0, 'daemon with ppid=1 must not be attributed to w1 merely by cwd')
+
+  // Contrast: if PID 200 is child of 100
+  const childPidToPpid = new Map([[200, 100]])
+  const childResult = attributePortsToWorkspaces(pidToPorts, childPidToPpid, shellPidToWorkspace, { kill: () => true })
+  assert.equal(childResult.get('w1'), 'Ports 8000', 'descendant of shell pid 100 must be attributed to w1')
+})
+
+test('ports: conflicting ownership across spaces leaves port unassigned', () => {
+  const shellPidToWorkspace = new Map([[100, 'w1'], [101, 'w2']])
+  const pidToPpid = new Map([[200, 100], [300, 101]])
+  // Port 9000 is listened by both w1 (pid 200) and w2 (pid 300)
+  const pidToPorts = new Map([
+    [200, new Set([3000, 9000])],
+    [300, new Set([4000, 9000])]
+  ])
+
+  const result = attributePortsToWorkspaces(pidToPorts, pidToPpid, shellPidToWorkspace, { kill: () => true })
+  assert.equal(result.get('w1'), 'Ports 3000')
+  assert.equal(result.get('w2'), 'Ports 4000')
+  assert.ok(!result.get('w1').includes('9000'))
+  assert.ok(!result.get('w2').includes('9000'))
+})
+
+test('ports: sibling spaces with identical cwd are attributed distinctly without conflation', () => {
+  const snapshot = {
+    workspaces: [{ workspace_id: 'w1' }, { workspace_id: 'w2' }],
+    panes: [
+      { pane_id: 'w1:p1', workspace_id: 'w1', cwd: '/common/repo', foreground_cwd: '/common/repo', shell_pid: 100 },
+      { pane_id: 'w2:p1', workspace_id: 'w2', cwd: '/common/repo', foreground_cwd: '/common/repo', shell_pid: 101 }
+    ]
+  }
+
+  const psOutput = '  PID  PPID\n  100     1\n  200   100\n  101     1\n  300   101\n'
+  const lsofOutput = 'p200\nf3\nPtcp\nTST=LISTEN\nn*:3001\np300\nf3\nPtcp\nTST=LISTEN\nn*:3002\n'
+
+  const result = collectWorkspacePorts(process.env, snapshot, snapshot.workspaces, {
+    platform: 'darwin',
+    psOutput,
+    lsofOutput,
+    kill: () => true
+  })
+
+  assert.equal(result.get('w1'), 'Ports 3001')
+  assert.equal(result.get('w2'), 'Ports 3002')
+})
+
+test('ports: child and grandchild listeners are traversed via PPID chain', () => {
+  const shellPidToWorkspace = new Map([[100, 'w1']])
+  // 100 (shell) -> 200 (npm/tool) -> 300 (dev server)
+  const pidToPpid = new Map([[200, 100], [300, 200]])
+  const pidToPorts = new Map([[300, new Set([5173])]])
+
+  const result = attributePortsToWorkspaces(pidToPorts, pidToPpid, shellPidToWorkspace, { kill: () => true })
+  assert.equal(result.get('w1'), 'Ports 5173')
+})
+
+test('ports: non-listening TCP (ESTABLISHED, CLOSE_WAIT, connected) is rejected', () => {
+  const lsofOutput = [
+    'p100',
+    'f3',
+    'Ptcp',
+    'TST=ESTABLISHED',
+    'n127.0.0.1:5173->127.0.0.1:54321',
+    'p101',
+    'f4',
+    'Ptcp',
+    'TST=CLOSE_WAIT',
+    'n127.0.0.1:8080',
+    'p102',
+    'f5',
+    'Ptcp',
+    'TST=LISTEN',
+    'n*:3000'
+  ].join('\n') + '\n'
+
+  const pidToPorts = parseLsofOutput(lsofOutput)
+  assert.equal(pidToPorts.has(100), false, 'ESTABLISHED socket must not be parsed')
+  assert.equal(pidToPorts.has(101), false, 'CLOSE_WAIT socket must not be parsed')
+  assert.ok(pidToPorts.has(102))
+  assert.deepEqual([...pidToPorts.get(102)], [3000])
+})
+
+test('ports: IPv4 and IPv6 sockets deduplicate into a single port number', () => {
+  const lsofOutput = [
+    'p200',
+    'f3',
+    'PTCP',
+    'TST=LISTEN',
+    'n*:8080',
+    'f4',
+    'PTCP',
+    'TST=LISTEN',
+    'n*:8080',
+    'f5',
+    'PTCP',
+    'TST=LISTEN',
+    'n127.0.0.1:8080'
+  ].join('\n') + '\n'
+
+  const pidToPorts = parseLsofOutput(lsofOutput)
+  assert.ok(pidToPorts.has(200))
+  assert.deepEqual([...pidToPorts.get(200)], [8080])
+
+  const shellPidToWorkspace = new Map([[100, 'w1']])
+  const pidToPpid = new Map([[200, 100]])
+  const result = attributePortsToWorkspaces(pidToPorts, pidToPpid, shellPidToWorkspace, { kill: () => true })
+  assert.equal(result.get('w1'), 'Ports 8080')
+})
+
+test('ports: no ports or empty listeners clears token without claiming zero services', () => {
+  const snapshot = {
+    workspaces: [{ workspace_id: 'w1' }],
+    panes: [{ pane_id: 'w1:p1', workspace_id: 'w1', shell_pid: 100 }]
+  }
+
+  const result = collectWorkspacePorts(process.env, snapshot, snapshot.workspaces, {
+    platform: 'darwin',
+    psOutput: '  PID  PPID\n  100     1\n',
+    lsofOutput: '',
+    kill: () => true
+  })
+
+  assert.equal(result.size, 0)
+
+  const args = workspaceMetadataArgs('w1', { branch: 'main', gitStatus: 'clean', ports: null }, '1', Date.now(), 60000)
+  assert.ok(args.includes('--clear-token'))
+  const clearIndex = args.indexOf('mahiro_workspace_ports')
+  assert.ok(clearIndex !== -1 && args[clearIndex - 1] === '--clear-token')
+  assert.ok(!args.some(arg => String(arg).startsWith('mahiro_workspace_ports=')))
+})
+
+test('ports: command failure or unsupported platform clears token and leaves Git metadata intact', async () => {
+  const setup = await fixture()
+  const repo = join(setup.root, 'repo')
+  await initGitRepo(repo, { branch: 'main' })
+
+  const snapshotData = {
+    workspaces: [{ workspace_id: 'w1' }],
+    panes: [{ pane_id: 'w1:p1', workspace_id: 'w1', foreground_cwd: repo, shell_pid: 100 }],
+    layouts: [{ workspace_id: 'w1', tab_id: 't1', focused_pane_id: 'w1:p1' }]
+  }
+
+  const stub = await stubHerdrWithSnapshot(setup, snapshotData)
+  // Reconcile with unsupported platform 'win32'
+  const result = await reconcileWorkspaces(stub.env, {
+    snapshot: snapshotData,
+    platform: 'win32'
+  })
+
+  assert.equal(result.reports, 1)
+  const calls = await readCalls(stub.log)
+  const reportCall = calls.find(c => c[0] === 'workspace' && c[1] === 'report-metadata')
+  assert.ok(reportCall, 'workspace report must still occur')
+  assert.ok(reportCall.includes('mahiro_workspace_branch=main'), 'git branch must still be reported')
+  assert.ok(reportCall.includes('mahiro_workspace_git_status=clean'), 'git status must still be reported')
+  const portsIndex = reportCall.indexOf('mahiro_workspace_ports')
+  assert.ok(portsIndex !== -1 && reportCall[portsIndex - 1] === '--clear-token', 'ports token must be cleared')
+})
+
+test('ports: stale token clearing when port stops listening', () => {
+  const now = Date.now()
+  // Cycle 1: port active
+  const argsActive = workspaceMetadataArgs('w1', {
+    branch: 'main',
+    gitStatus: 'clean',
+    ports: 'Ports 5173'
+  }, '1', now, 60000)
+  assert.ok(argsActive.some(arg => arg === 'mahiro_workspace_ports=Ports 5173'))
+
+  // Cycle 2: port stopped listening -> ports is null
+  const argsStopped = workspaceMetadataArgs('w1', {
+    branch: 'main',
+    gitStatus: 'clean',
+    ports: null
+  }, '2', now, 60000)
+  assert.ok(!argsStopped.some(arg => String(arg).startsWith('mahiro_workspace_ports=')))
+  const idx = argsStopped.indexOf('mahiro_workspace_ports')
+  assert.ok(idx !== -1 && argsStopped[idx - 1] === '--clear-token')
+})
+
+test('ports: bounded sorting and deadline honor', () => {
+  const shellPidToWorkspace = new Map([[100, 'w1']])
+  const pidToPpid = new Map([[200, 100]])
+  const pidToPorts = new Map([[200, new Set([8080, 3000, 5173])]])
+
+  const result = attributePortsToWorkspaces(pidToPorts, pidToPpid, shellPidToWorkspace, { kill: () => true })
+  assert.equal(result.get('w1'), 'Ports 3000 · 5173 · 8080', 'ports must be numerically sorted')
+
+  // Deadline honor
+  assert.throws(() => {
+    collectWorkspacePorts(process.env, { workspaces: [{ workspace_id: 'w1' }], panes: [{ pane_id: 'w1:p1', workspace_id: 'w1', shell_pid: 100 }] }, [{ workspace_id: 'w1' }], {
+      platform: 'darwin',
+      clock: () => 1000,
+      deadline: 1500
+    })
+  }, /deadline exhausted/u)
+})
+
+test('ports: multi-tab attribution includes background tabs and all panes', () => {
+  const snapshot = {
+    workspaces: [{ workspace_id: 'w1', active_tab_id: 't1' }],
+    panes: [
+      { pane_id: 'w1:p1', workspace_id: 'w1', tab_id: 't1', shell_pid: 100 },
+      { pane_id: 'w1:p2', workspace_id: 'w1', tab_id: 't2', shell_pid: 101 }
+    ]
+  }
+
+  const psOutput = '  PID  PPID\n  100     1\n  200   100\n  101     1\n  201   101\n'
+  const lsofOutput = 'p200\nf3\nPtcp\nTST=LISTEN\nn*:3000\np201\nf4\nPtcp\nTST=LISTEN\nn*:4000\n'
+
+  const result = collectWorkspacePorts(process.env, snapshot, snapshot.workspaces, {
+    platform: 'darwin',
+    psOutput,
+    lsofOutput,
+    kill: () => true
+  })
+
+  assert.equal(result.get('w1'), 'Ports 3000 · 4000', 'both active and background tab panes must be attributed')
+})
+
+test('ports: config configure and restore preserve [ui.sidebar.spaces] with ports token row and coexistence', async () => {
+  const setup = await fixture()
+  const { configure, restoreConfig, hasSpacesOwner } = await import('../src/core.mjs')
+
+  const original = Buffer.from('[ui.sidebar]\nsymbols = "codicons"\n')
+  await writeFile(setup.herdrConfig, original, { mode: 0o640 })
+  await configure(setup.env)
+
+  const applied = (await readFile(setup.herdrConfig)).toString('utf8')
+  assert.ok(applied.includes('symbols = "codicons"'), 'existing symbols setting must be preserved')
+  assert.ok(applied.includes('[ui.sidebar.spaces]'), 'sidebar spaces block must be added')
+  assert.ok(applied.includes('$mahiro_workspace_ports'), 'ports token must be configured in spaces block')
+  assert.equal(hasSpacesOwner(applied), true, 'hasSpacesOwner must detect configured spaces block')
+
+  await restoreConfig(setup.env)
+  const restored = (await readFile(setup.herdrConfig)).toString('utf8')
+  assert.equal(restored, original.toString('utf8'), 'restored config must match original exactly')
+  assert.equal(hasSpacesOwner(restored), false, 'hasSpacesOwner must be false on restored config')
+
+  // Coexistence of all 4 tokens
+  const args = workspaceMetadataArgs('w1', {
+    branch: 'feat/test',
+    gitStatus: 'clean',
+    isLinked: true,
+    worktreeLabel: 'wt-1',
+    ports: 'Ports 5173 · 8787'
+  }, '1', Date.now(), 60000)
+
+  for (const tokenName of OWNED_WORKSPACE_TOKENS) {
+    const isSet = args.some((val, idx) => args[idx - 1] === '--token' && String(val).startsWith(`${tokenName}=`))
+    assert.ok(isSet, `Token ${tokenName} must coexist in report`)
+  }
+  assert.equal(args.includes('--clear-token'), false, 'no tokens should be cleared when all are provided')
+})
+
+test('ports: existing applied snapshot upgrades without losing applied-only settings or original bytes', async () => {
+  const setup = await fixture()
+  const { configure, restoreConfig } = await import('../src/core.mjs')
+  const original = '[ui]\nstatus_indicators = "symbols"\n'
+  await writeFile(setup.herdrConfig, original, { mode: 0o640 })
+  await configure(setup.env)
+  const statePath = join(setup.pluginConfig, 'config-snapshots.json')
+  const saved = JSON.parse(await readFile(statePath, 'utf8'))
+  const oldApplied = Buffer.from(saved.appliedBase64, 'base64').toString('utf8')
+    .replace(/\n\[ui\.sidebar\.spaces\][\s\S]*?(?=# mahiro-herdr:end)/u, '\n') + '\n[keys]\nsettings = "prefix+s"\n'
+  saved.appliedBase64 = Buffer.from(oldApplied).toString('base64')
+  await writeFile(statePath, JSON.stringify(saved))
+  await writeFile(setup.herdrConfig, oldApplied)
+  await configure(setup.env)
+  const applied = await readFile(setup.herdrConfig, 'utf8')
+  assert.ok(applied.includes('$mahiro_workspace_ports'))
+  assert.ok(applied.includes('settings = "prefix+s"'))
+  assert.ok(applied.includes('status_indicators = "symbols"'))
+  const upgraded = JSON.parse(await readFile(statePath, 'utf8'))
+  assert.equal(upgraded.originalBase64, saved.originalBase64)
+  await configure(setup.env)
+  assert.equal(await readFile(setup.herdrConfig, 'utf8'), applied)
+  await writeFile(setup.herdrConfig, applied + '# unrelated drift\n')
+  await assert.rejects(configure(setup.env), /drifted/u)
+  await writeFile(setup.herdrConfig, applied)
+  await restoreConfig(setup.env)
+  assert.equal(await readFile(setup.herdrConfig, 'utf8'), original)
+})
+
+test('ports: oversized pane inventory fails closed instead of reporting a partial owner map', () => {
+  const snapshot = {
+    workspaces: [{ workspace_id: 'w1' }],
+    panes: Array.from({ length: 129 }, (_, i) => ({ pane_id: `p${i}`, workspace_id: 'w1', shell_pid: i + 100 }))
+  }
+  assert.throws(() => collectWorkspacePorts(process.env, snapshot, snapshot.workspaces, { platform: 'darwin' }), /inventory exceeds/u)
+})
+
+test('ports: collector sub-deadline failure does not stop Git reports', async () => {
+  const setup = await fixture()
+  const repo = join(setup.root, 'budget-repo')
+  await initGitRepo(repo)
+  const snapshot = {
+    workspaces: [{ workspace_id: 'w1', worktree: { checkout_path: repo } }],
+    panes: [{ pane_id: 'p1', workspace_id: 'w1' }]
+  }
+  const stub = await stubHerdrWithSnapshot(setup, snapshot)
+  let now = 1000
+  const result = await reconcileWorkspaces(stub.env, {
+    snapshot,
+    platform: 'darwin',
+    clock: () => now,
+    deadline: 30000,
+    getPaneProcessInfo: () => { now = 4100; throw new Error('invocation deadline exhausted') }
+  })
+  assert.equal(result.reports, 1)
+  const reports = workspaceReportCalls(await readCalls(stub.log))
+  assert.ok(reports[0].includes('mahiro_workspace_git_status=clean'))
+  assert.ok(reports[0].includes('mahiro_workspace_ports'))
 })

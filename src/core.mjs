@@ -79,6 +79,14 @@ rows = [
   ],
   [{ token = "$summary", fg = "#A5A8AB", dim = true }],
 ] # ${OWNER}:rows
+
+[ui.sidebar.spaces] # ${OWNER}:spaces-owner
+row_gap = 0 # ${OWNER}:spaces-row-gap
+rows = [
+  ["state_icon", "workspace"],
+  ["branch", "git_status"],
+  [{ token = "$mahiro_workspace_ports", fg = "#A5A8AB", dim = true }],
+] # ${OWNER}:spaces-rows
 # ${OWNER}:end
 `
 
@@ -263,6 +271,34 @@ export function hasAgentsOwner(config) {
   return false
 }
 
+export function hasSpacesOwner(config) {
+  let table = ''
+  for (const line of config.split(/\r?\n/u)) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#')) continue
+    if (trimmed.startsWith('[')) {
+      if (trimmed.includes('\\')) return true
+      const match = trimmed.match(/^\[{1,2}\s*([^\]]+?)\s*\]{1,2}(?:\s*#.*)?$/u)
+      if (!match) return true
+      table = match[1].replace(/[\s'"]/gu, '')
+      if (table === 'ui.sidebar.spaces' || table.startsWith('ui.sidebar.spaces.')) return true
+      if (table.includes('ui') && table.includes('sidebar') && table.includes('spaces')) return true
+      continue
+    }
+
+    const assignment = trimmed.match(/^([^=]+?)\s*=\s*(.*)$/u)
+    if (!assignment) continue
+    if (assignment[1].includes('\\')) return true
+    const key = assignment[1].replace(/[\s'"]/gu, '')
+    const fullKey = table ? `${table}.${key}` : key
+    const compactValue = assignment[2].replace(/\s/gu, '')
+    if (fullKey === 'ui.sidebar.spaces' || fullKey.startsWith('ui.sidebar.spaces.')) return true
+    if (fullKey.includes('ui') && fullKey.includes('sidebar') && fullKey.includes('spaces')) return true
+    if ((fullKey === 'ui' || fullKey === 'ui.sidebar') && compactValue.startsWith('{')) return true
+  }
+  return false
+}
+
 async function inspectConfig(path) {
   let details
   try {
@@ -302,6 +338,23 @@ function matchesState(current, exists, mode, bytes) {
   return current.exists === exists && (!exists || current.mode === mode) && current.bytes.equals(bytes)
 }
 
+function upgradedAppliedBytes(saved) {
+  const text = decodeConfig(saved.applied)
+  const begin = `# ${OWNER}:begin`
+  const end = `# ${OWNER}:end`
+  const start = text.indexOf(begin)
+  const finish = text.indexOf(end, start)
+  if (start < 0 || finish < 0 || text.indexOf(begin, start + begin.length) !== -1 || text.indexOf(end, finish + end.length) !== -1) {
+    throw new Error('refusing to upgrade ambiguous sidebar ownership markers')
+  }
+  const outside = text.slice(0, start) + text.slice(finish + end.length)
+  if (hasAgentsOwner(outside) || hasSpacesOwner(outside)) {
+    throw new Error('refusing to upgrade conflicting sidebar ownership')
+  }
+  // Preserve applied-only bindings and settings as well as original uninstall bytes.
+  return Buffer.from(text.slice(0, start) + SIDEBAR_BLOCK.trimEnd() + text.slice(finish + end.length))
+}
+
 async function configureUnlocked(env) {
   const path = herdrConfigPath(env)
   const statePath = join(pluginConfigDir(env), 'config-snapshots.json')
@@ -310,16 +363,53 @@ async function configureUnlocked(env) {
 
   if (savedBytes) {
     const saved = parseSnapshot(savedBytes, path)
-    if (matchesState(current, true, saved.originalMode, saved.applied)) return
-    if (!matchesState(current, saved.originalExists, saved.originalMode, saved.original)) {
-      throw new Error('refusing to configure: Herdr config drifted from both known snapshots')
+    const targetApplied = upgradedAppliedBytes(saved)
+
+    if (saved.applied.equals(targetApplied)) {
+      if (matchesState(current, true, saved.originalMode, targetApplied)) return
+      if (!matchesState(current, saved.originalExists, saved.originalMode, saved.original)) {
+        throw new Error('refusing to configure: Herdr config drifted from both known snapshots')
+      }
+      await atomicWrite(path, targetApplied, saved.originalMode)
+      return
     }
-    await atomicWrite(path, saved.applied, saved.originalMode)
+
+    const matchesOldApplied = matchesState(current, true, saved.originalMode, saved.applied)
+    const matchesOriginal = matchesState(current, saved.originalExists, saved.originalMode, saved.original)
+    const matchesTargetApplied = matchesState(current, true, saved.originalMode, targetApplied)
+
+    if (!matchesOldApplied && !matchesOriginal && !matchesTargetApplied) {
+      throw new Error('refusing to configure: Herdr config drifted from known snapshots')
+    }
+
+    const newSnapshot = Buffer.from(JSON.stringify({
+      owner: OWNER,
+      configPath: path,
+      originalExists: saved.originalExists,
+      originalKind: saved.originalKind,
+      appliedKind: 'regular',
+      originalMode: saved.originalMode,
+      originalBase64: saved.originalBase64,
+      appliedBase64: targetApplied.toString('base64')
+    }, null, 2) + '\n')
+
+    if (matchesTargetApplied) {
+      await atomicWrite(statePath, newSnapshot)
+      return
+    }
+
+    await atomicWrite(statePath, newSnapshot)
+    try {
+      await atomicWrite(path, targetApplied, saved.originalMode)
+    } catch (writeErr) {
+      await atomicWrite(statePath, savedBytes)
+      throw writeErr
+    }
     return
   }
 
   const text = decodeConfig(current.bytes)
-  if (hasAgentsOwner(text)) throw new Error('refusing to configure: ui.sidebar.agents ownership is present or ambiguous')
+  if (hasAgentsOwner(text) || hasSpacesOwner(text)) throw new Error('refusing to configure: ui.sidebar.agents or ui.sidebar.spaces ownership is present or ambiguous')
   const applied = appliedBytes(current.bytes)
   const snapshot = Buffer.from(JSON.stringify({
     owner: OWNER,
@@ -345,7 +435,8 @@ async function restorePreflightUnlocked(env) {
     return { needed: false }
   }
   const saved = parseSnapshot(savedBytes, path)
-  const applied = matchesState(current, true, saved.originalMode, saved.applied)
+  const targetApplied = upgradedAppliedBytes(saved)
+  const applied = matchesState(current, true, saved.originalMode, saved.applied) || matchesState(current, true, saved.originalMode, targetApplied)
   const original = matchesState(current, saved.originalExists, saved.originalMode, saved.original)
   if (!applied && !original) throw new Error('Herdr config drifted from both known snapshots')
   return { needed: applied, saved, path, statePath }

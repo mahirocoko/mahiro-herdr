@@ -10,7 +10,8 @@ Current evidence checked on 2026-10-05: installed Herdr 0.9.3, bundled public AP
 | ------------------------------------------------------ | --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Space/project/worktree inventory and grouping          | Herdr workspace/worktree runtime and native TUI                       | Use authoritative identities. The metadata bridge may publish bounded Git facts, not invent repository/worktree topology.                                                                                               |
 | Working animation and attention                        | Herdr native TUI/status aggregation; agent-specific runtime reporters | Keep Agents anatomy. Native spinner rendering is not a plugin-provided widget API. Space/Tab attention aggregates may prioritize unseen completion over working; any current-activity summary must be separately named. |
-| Branch/dirty/linked-worktree metadata for Web          | `src/workspace-metadata.mjs`                                          | Already implemented; shared allowlisted tokens remain stable.                                                                                                                                                           |
+| Branch/dirty/linked-worktree and listening ports metadata | `src/workspace-metadata.mjs`                                          | Already implemented; shared allowlisted tokens (`mahiro_workspace_branch`, `mahiro_workspace_git_status`, `mahiro_workspace_worktree`, `mahiro_workspace_ports`) remain stable. Bounded one-shot listener collection and PID-to-Space attribution (`lsof` + `ps` on macOS), no continuous pollers or background daemons. |
+| Space listening ports sidebar row configuration       | `src/core.mjs`                                                        | Configures `[ui.sidebar.spaces]` to append an owned listening ports row (`mahiro_workspace_ports`) under the existing reversible snapshot and lock contract, preserving agent rows, symbols setting, and native Space name/branch/git rows. |
 | Rename/create/close tabs                               | Herdr `tab.rename`, `tab.create`, `tab.close`                         | Public operations exist; Web must extend its typed/authenticated/target-fenced mutation boundary rather than dispatch arbitrary RPC.                                                                                    |
 | Reorder tabs                                           | Herdr `tab.move`                                                      | Public API exists even though the installed tab CLI help has no move command. Reordering is not moving a tab into a split.                                                                                              |
 | Split/move panes                                       | Herdr `pane.split`, `pane.move`, `pane.swap`                          | Pane operations exist. Map exact destination and ownership before presenting an Orca-style move-to-split action.                                                                                                        |
@@ -270,17 +271,22 @@ At reviewed Cursor Agent version `2026.09.23-86fc751`, the custom statusline pay
 
 ## Workspace metadata bridge (v0.4.0+)
 
-The module `src/workspace-metadata.mjs` implements an allowlisted, bounded cross-client projection of workspace Git facts for Herdr Web.
+The module `src/workspace-metadata.mjs` owns bounded workspace Git facts and listening TCP ports. Git tokens support cross-client consumers; the ports token also renders in native Space rows configured by `src/core.mjs`.
 
 ### Ground truth and boundaries
 
 - Herdr 0.9.1 already renders native Space built-ins `branch` and `git_status`, but public workspace snapshots do not expose their values.
-- This plugin does **NOT** replace native Space rendering. It publishes cross-client workspace tokens for web and remote clients.
+- This plugin preserves native Space name, branch and Git status rows and adds one ports metadata row. It does not replace native lifecycle or indicators.
 - Canonical source: `mahiro-herdr.workspace`.
 - Canonical owned workspace tokens:
   1. `mahiro_workspace_branch`: sanitized/bounded branch name (detached HEAD uses `detached@<short sha>`).
   2. `mahiro_workspace_git_status`: exact `clean` or `dirty`.
   3. `mahiro_workspace_worktree`: bounded linked-worktree label (omitted / cleared if not linked).
+  4. `mahiro_workspace_ports`: sorted numeric listening TCP ports, such as `Ports 5173 · 8787`; cleared on empty, failed, ambiguous or unsupported inspection.
+- Ports inspection is macOS-only (`/bin/ps`, `/usr/sbin/lsof` and native pane shell PID inspection). Linux retains Git/quota behavior but clears ports. All tabs participate; attribution follows process ancestry, never repository cwd. Reparented or outside-Herdr servers remain unassigned. PID liveness checks are not PID-reuse protection or an atomic ownership snapshot.
+- Ports have a three-second collection sub-budget within the existing invocation deadline. Collection failures clear only the ports value, leaving time for Git reports. More than 128 panes fails closed instead of attributing from a truncated inventory.
+- Ports refresh only on existing startup/manual/pane events, not immediately on every socket change. Values expire with the metadata TTL; no watcher or daemon is added.
+- Configure upgrades only an exact known applied/original configuration under the existing lock, preserving applied-only settings outside the owned sidebar block and immutable original uninstall bytes. Unknown drift or competing Spaces ownership is rejected.
 - Subprocess argv without shell is used for Git; no shell interpolation or script wrappers.
 - Display-only: values have a bounded TTL (5 minutes by default) so stale facts expire if unattended.
 - Sequences use the invocation-wide system-monotonic `u64` sequence shared with pane reports.

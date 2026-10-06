@@ -15,12 +15,14 @@ export const WORKSPACE_SOURCE = 'mahiro-herdr.workspace'
 export const OWNED_WORKSPACE_TOKENS = [
   'mahiro_workspace_branch',
   'mahiro_workspace_git_status',
-  'mahiro_workspace_worktree'
+  'mahiro_workspace_worktree',
+  'mahiro_workspace_ports'
 ]
 export const MAX_WORKSPACES = 128
 export const WORKSPACE_TTL_MS = 5 * 60 * 1000
 
 const DELIVERY_HEADROOM_MS = 1000
+const PORTS_BUDGET_MS = 3000
 const MAX_ID_CHARS = 128
 
 function validId(value) {
@@ -203,12 +205,328 @@ export function inspectGitRepository(cwd, options = {}) {
   }
 }
 
+function runSubprocess(bin, args, options = {}) {
+  const clock = options.clock || Date.now
+  const deadline = options.deadline ?? clock() + INVOCATION_DEADLINE_MS
+  const remaining = Math.floor(deadline - clock())
+  if (remaining <= DELIVERY_HEADROOM_MS) {
+    return { ok: false, error: new Error(`invocation deadline exhausted before ${bin} command`) }
+  }
+
+  const timeout = Math.min(COMMAND_TIMEOUT_MS, remaining)
+  const baseEnv = options.env !== undefined ? options.env : process.env
+  const callerPath = baseEnv.PATH || process.env.PATH || ''
+  const standardPaths = ['/usr/bin', '/bin', '/usr/sbin', '/sbin']
+  const mergedPath = callerPath
+    ? `${callerPath}:${standardPaths.filter(p => !callerPath.split(':').includes(p)).join(':')}`
+    : standardPaths.join(':')
+
+  const env = {
+    ...baseEnv,
+    PATH: mergedPath,
+    LC_ALL: 'C'
+  }
+
+  const result = spawnSync(bin, args, {
+    cwd: options.cwd || process.cwd(),
+    encoding: 'utf8',
+    timeout,
+    maxBuffer: MAX_OUTPUT_BYTES,
+    killSignal: 'SIGKILL',
+    env
+  })
+
+  if (result.error) {
+    return { ok: false, error: result.error, status: result.status }
+  }
+  if (result.status !== 0) {
+    return { ok: false, status: result.status, stderr: result.stderr, stdout: result.stdout }
+  }
+  return { ok: true, stdout: result.stdout, status: 0 }
+}
+
+function resolveExecutable(bin, searchPaths = []) {
+  if (bin && isAbsolute(bin)) return bin
+  for (const candidate of searchPaths) {
+    try {
+      if (existsSync(candidate)) return candidate
+    } catch {}
+  }
+  return bin
+}
+
+export function parsePsOutput(output) {
+  const pidToPpid = new Map()
+  if (!output || typeof output !== 'string') return pidToPpid
+  for (const line of output.split(/\r?\n/u)) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    const parts = trimmed.split(/\s+/u)
+    if (parts.length >= 2) {
+      const pid = parseInt(parts[0], 10)
+      const ppid = parseInt(parts[1], 10)
+      if (Number.isSafeInteger(pid) && Number.isSafeInteger(ppid) && pid > 0) {
+        pidToPpid.set(pid, ppid)
+      }
+    }
+  }
+  return pidToPpid
+}
+
+export function parseLsofOutput(output) {
+  if (!output || typeof output !== 'string') return new Map()
+  const pidToPorts = new Map()
+  let currentPid = null
+  let currentProto = null
+  let currentPort = null
+  let currentIsListen = false
+  let hasTField = false
+
+  const commitSocket = () => {
+    if (currentPid && currentPort) {
+      const isTcp = !currentProto || currentProto.toUpperCase() === 'TCP'
+      const isListening = hasTField ? currentIsListen : true
+      if (isTcp && isListening) {
+        if (!pidToPorts.has(currentPid)) {
+          pidToPorts.set(currentPid, new Set())
+        }
+        pidToPorts.get(currentPid).add(currentPort)
+      }
+    }
+    currentPort = null
+    currentIsListen = false
+    hasTField = false
+  }
+
+  const commitProcess = () => {
+    commitSocket()
+    currentPid = null
+    currentProto = null
+  }
+
+  for (const line of output.split(/\r?\n/u)) {
+    if (!line) continue
+    const tag = line[0]
+    const val = line.slice(1)
+
+    if (tag === 'p') {
+      commitProcess()
+      const pid = parseInt(val, 10)
+      if (Number.isSafeInteger(pid) && pid > 0) {
+        currentPid = pid
+      }
+    } else if (tag === 'f') {
+      commitSocket()
+    } else if (tag === 'P') {
+      currentProto = val
+    } else if (tag === 'T') {
+      if (val.startsWith('ST=')) {
+        hasTField = true
+        currentIsListen = (val.slice(3).toUpperCase() === 'LISTEN')
+      }
+    } else if (tag === 'n') {
+      if (val.includes('->')) {
+        currentPort = null
+      } else {
+        const lastColon = val.lastIndexOf(':')
+        if (lastColon !== -1) {
+          const port = parseInt(val.slice(lastColon + 1), 10)
+          if (Number.isSafeInteger(port) && port >= 1 && port <= 65535) {
+            currentPort = port
+          } else {
+            currentPort = null
+          }
+        }
+      }
+    }
+  }
+  commitProcess()
+  return pidToPorts
+}
+
+export function attributePortsToWorkspaces(pidToPorts, pidToPpid, shellPidToWorkspace, options = {}) {
+  const kill = options.kill || process.kill
+  const portToSpaces = new Map()
+
+  for (const [pid, ports] of pidToPorts) {
+    if (!ports || ports.size === 0) continue
+
+    if (typeof kill === 'function') {
+      try {
+        kill(pid, 0)
+      } catch (err) {
+        if (err.code === 'ESRCH') {
+          continue
+        }
+      }
+    }
+
+    let current = pid
+    let ownerWorkspace = null
+    const visited = new Set()
+
+    while (current && current > 1 && !visited.has(current)) {
+      visited.add(current)
+      if (shellPidToWorkspace.has(current)) {
+        ownerWorkspace = shellPidToWorkspace.get(current)
+        break
+      }
+      current = pidToPpid.get(current)
+    }
+
+    if (ownerWorkspace) {
+      for (const port of ports) {
+        if (!portToSpaces.has(port)) {
+          portToSpaces.set(port, new Set())
+        }
+        portToSpaces.get(port).add(ownerWorkspace)
+      }
+    }
+  }
+
+  const workspacePorts = new Map()
+  for (const [port, spaces] of portToSpaces) {
+    if (spaces.size === 1) {
+      const wsId = [...spaces][0]
+      if (!workspacePorts.has(wsId)) {
+        workspacePorts.set(wsId, new Set())
+      }
+      workspacePorts.get(wsId).add(port)
+    }
+  }
+
+  const result = new Map()
+  for (const [wsId, portSet] of workspacePorts) {
+    if (portSet.size > 0) {
+      const sorted = [...portSet].sort((a, b) => a - b)
+      result.set(wsId, sanitizeToken(`Ports ${sorted.join(' · ')}`))
+    }
+  }
+  return result
+}
+
+export function collectWorkspacePorts(env = process.env, snapshot = null, targets = [], options = {}) {
+  const platform = options.platform || process.platform
+  if (platform !== 'darwin') {
+    return new Map()
+  }
+
+  const clock = options.clock || Date.now
+  const deadline = options.deadline ?? clock() + INVOCATION_DEADLINE_MS
+  if (deadline - clock() <= DELIVERY_HEADROOM_MS) {
+    throw new Error('invocation deadline exhausted before ports inspection')
+  }
+
+  const allPanes = Array.isArray(snapshot?.panes) ? snapshot.panes : []
+  const allWorkspaces = Array.isArray(snapshot?.workspaces) ? snapshot.workspaces : targets
+  const knownWsIds = new Set(allWorkspaces.filter(ws => ws && validId(ws.workspace_id)).map(ws => ws.workspace_id))
+  const relevantPanes = allPanes.filter(pane => pane && validId(pane.pane_id) && validId(pane.workspace_id) && knownWsIds.has(pane.workspace_id))
+  if (relevantPanes.length > MAX_WORKSPACES) throw new Error('ports pane inventory exceeds limit')
+
+  if (relevantPanes.length === 0) {
+    return new Map()
+  }
+
+  const shellPidToWorkspace = new Map()
+  const conflictedShellPids = new Set()
+  const kill = options.kill || process.kill
+
+  for (const pane of relevantPanes) {
+    if (deadline - clock() <= DELIVERY_HEADROOM_MS) {
+      throw new Error('invocation deadline exhausted during pane process inspection')
+    }
+
+    let shellPid = null
+    if (Number.isSafeInteger(pane.shell_pid) && pane.shell_pid > 1) {
+      shellPid = pane.shell_pid
+    } else if (options.paneShellPids && options.paneShellPids.has(pane.pane_id)) {
+      shellPid = options.paneShellPids.get(pane.pane_id)
+    } else if (options.getPaneProcessInfo) {
+      const info = options.getPaneProcessInfo(pane.pane_id)
+      if (Number.isSafeInteger(info?.shell_pid) && info.shell_pid > 1) {
+        shellPid = info.shell_pid
+      }
+    } else {
+      try {
+        const output = runHerdr(env, ['pane', 'process-info', '--pane', pane.pane_id], { clock, deadline })
+        const parsed = JSON.parse(output)
+        const info = parsed?.result?.process_info || parsed?.process_info
+        if (Number.isSafeInteger(info?.shell_pid) && info.shell_pid > 1) {
+          shellPid = info.shell_pid
+        }
+      } catch (err) {
+        if (err.message?.includes('deadline exhausted')) throw err
+        shellPid = null
+      }
+    }
+
+    if (shellPid) {
+      if (typeof kill === 'function') {
+        try {
+          kill(shellPid, 0)
+        } catch (err) {
+          if (err.code === 'ESRCH') {
+            continue
+          }
+        }
+      }
+
+      if (shellPidToWorkspace.has(shellPid)) {
+        if (shellPidToWorkspace.get(shellPid) !== pane.workspace_id) {
+          conflictedShellPids.add(shellPid)
+        }
+      } else {
+        shellPidToWorkspace.set(shellPid, pane.workspace_id)
+      }
+    }
+  }
+
+  for (const pid of conflictedShellPids) {
+    // Keep an ambiguity barrier: never walk past this root to another Space.
+    shellPidToWorkspace.set(pid, null)
+  }
+
+  if (shellPidToWorkspace.size === 0) {
+    return new Map()
+  }
+
+  let psOutput = options.psOutput
+  if (psOutput === undefined) {
+    const psBin = options.psBin || env.PS_BIN_PATH || '/bin/ps'
+    const psRes = runSubprocess(psBin, ['-A', '-o', 'pid=,ppid='], { clock, deadline, env })
+    if (!psRes.ok) {
+      return new Map()
+    }
+    psOutput = psRes.stdout
+  }
+
+  const pidToPpid = parsePsOutput(psOutput)
+
+  let lsofOutput = options.lsofOutput
+  if (lsofOutput === undefined) {
+    const lsofBin = options.lsofBin || env.LSOF_BIN_PATH || '/usr/sbin/lsof'
+    const lsofRes = runSubprocess(lsofBin, ['-n', '-P', '-iTCP', '-sTCP:LISTEN', '-F', 'pPnT'], { clock, deadline, env })
+    if (!lsofRes.ok) {
+      if (lsofRes.status === 1 && (!lsofRes.stdout || lsofRes.stdout.trim().length === 0)) {
+        return new Map()
+      }
+      return new Map()
+    }
+    lsofOutput = lsofRes.stdout
+  }
+
+  const pidToPorts = parseLsofOutput(lsofOutput)
+
+  return attributePortsToWorkspaces(pidToPorts, pidToPpid, shellPidToWorkspace, options)
+}
+
 export function workspaceMetadataArgs(workspaceId, metadata, sequence, now, ttlMs) {
   const tokens = metadata
     ? {
-        mahiro_workspace_branch: metadata.branch,
-        mahiro_workspace_git_status: metadata.gitStatus,
-        ...(metadata.isLinked && metadata.worktreeLabel ? { mahiro_workspace_worktree: metadata.worktreeLabel } : {})
+        ...(metadata.branch ? { mahiro_workspace_branch: metadata.branch } : {}),
+        ...(metadata.gitStatus ? { mahiro_workspace_git_status: metadata.gitStatus } : {}),
+        ...(metadata.isLinked && metadata.worktreeLabel ? { mahiro_workspace_worktree: metadata.worktreeLabel } : {}),
+        ...(metadata.ports ? { mahiro_workspace_ports: metadata.ports } : {})
       }
     : {}
 
@@ -283,6 +601,16 @@ export async function reconcileWorkspaces(env = process.env, options = {}) {
 
   if (targets.length === 0) return { reports: 0, sequence }
 
+  let workspacePorts = new Map()
+  if (!options.clearOnly) {
+    try {
+      const portsDeadline = Math.min(deadline - DELIVERY_HEADROOM_MS, clock() + PORTS_BUDGET_MS)
+      workspacePorts = collectWorkspacePorts(env, snapshot, targets, { ...options, clock, deadline: portsDeadline })
+    } catch {
+      workspacePorts = new Map()
+    }
+  }
+
   let reports = 0
   for (const workspace of targets) {
     const now = clock()
@@ -292,10 +620,11 @@ export async function reconcileWorkspaces(env = process.env, options = {}) {
 
     let metadata = null
     if (!options.clearOnly) {
+      let git = null
       try {
         const repoInfo = determineWorkspaceRepository(workspace, snapshot)
         if (repoInfo?.cwd) {
-          metadata = inspectGitRepository(repoInfo.cwd, {
+          git = inspectGitRepository(repoInfo.cwd, {
             ...options,
             deadline,
             clock,
@@ -305,7 +634,15 @@ export async function reconcileWorkspaces(env = process.env, options = {}) {
         }
       } catch (error) {
         if (error.message?.includes('deadline exhausted')) throw error
-        metadata = null
+        git = null
+      }
+
+      const ports = workspacePorts.get(workspace.workspace_id) || null
+      if (git || ports) {
+        metadata = {
+          ...(git || {}),
+          ports
+        }
       }
     }
 

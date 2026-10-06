@@ -20,7 +20,7 @@ The package remains `private: true` to prevent accidental npm publication. Distr
 - An external cache producer that implements the open adapter protocol, the optional native Agy statusline producer module, or the workspace metadata bridge
 - For Codex rows, an external pane-token producer that identifies eligible panes
 
-The source and isolated test suite support macOS and Linux. Mahiro has verified installation, configuration, events, refresh, and metadata behavior with Herdr 0.9.0 on macOS. GitHub Actions runs isolated Node 22 tests on `macos-latest` and `ubuntu-latest`; that Linux check does not claim live Herdr runtime integration.
+The source and isolated test suite support macOS and Linux. Listening TCP ports inspection is macOS-only; Linux clears that row while retaining Git/quota behavior. Mahiro has verified installation, configuration, events, refresh, and metadata behavior with Herdr 0.9.0 on macOS. GitHub Actions runs isolated Node 22 tests on `macos-latest` and `ubuntu-latest`; that Linux check does not claim live Herdr runtime integration.
 
 ## Install
 
@@ -116,7 +116,7 @@ This repository provides three distinct components:
 
 1. **Read-only Herdr Adapter (`src/core.mjs`)**: The core plugin runtime. It reads normalized `codex.json`, `agy.json`, and `cursor.json` cache files and projects them into Herdr agent sidebar rows. It never writes to cache files, never collects provider data, and makes no network requests.
 2. **Optional Agy Statusline Quota Producer (`src/agy-statusline-producer.mjs`)**: An opt-in helper module for Agy CLI users. It consumes already-delivered statusline payloads, normalizes the quota map, and publishes snapshots atomically to `agy.json`. It never reads credentials, email, plan tier, transcripts, sessions, or raw provider payloads, never invokes `agy -p`, and makes no network requests.
-3. **Workspace Metadata Bridge (`src/workspace-metadata.mjs`, v0.4.0+)**: A focused module publishing a bounded, allowlisted cross-client projection of Git metadata for Herdr Web without replacing native Space rendering. It observes `herdr api snapshot`, inspects Git repository evidence deterministically, and reports workspace metadata (`mahiro_workspace_branch`, `mahiro_workspace_git_status`, `mahiro_workspace_worktree`) via `herdr workspace report-metadata`.
+3. **Workspace Metadata Bridge (`src/workspace-metadata.mjs`, v0.4.0+)**: A focused module publishing a bounded, allowlisted cross-client projection of Git and listening port metadata for Herdr Web and sidebar display without replacing native Space rendering. It observes `herdr api snapshot`, inspects Git repository evidence deterministically, collects listening TCP ports per Space via bounded one-shot process-tree attribution (`lsof` + `ps` on macOS), and reports workspace metadata (`mahiro_workspace_branch`, `mahiro_workspace_git_status`, `mahiro_workspace_worktree`, `mahiro_workspace_ports`) via `herdr workspace report-metadata`.
 
 ## Open adapter inputs
 
@@ -168,7 +168,7 @@ Startup and manual refresh are stateless one-shot reconciliations. They read the
 
 Each invocation captures one system-monotonic sequence before inventory and uses it for every report. Mahiro's live Herdr 0.9.0 macOS verification confirmed that lower and equal sequences are silently ignored and metadata TTL expires from accepted publication time.
 
-The configured rows retain Herdr's native state/location and agent rows, then add externally owned model and context tokens, an explicit Agy shared-pool label, two family-grouped severity-colored quota rows, and Herdr's summary token. Since v0.4.0, workspace metadata additionally publishes cross-client Git status (`mahiro_workspace_branch`, `mahiro_workspace_git_status`, `mahiro_workspace_worktree`) for Herdr Web without replacing native Space rendering. Every adapter-owned token is set or cleared exactly once per patch. The adapter never clears `mahiro_sidebar_model`, `mahiro_sidebar_context`, or `mahiro_sidebar_provider`.
+The configured rows retain Herdr's native state/location and agent rows, then add externally owned model and context tokens, an explicit Agy shared-pool label, two family-grouped severity-colored quota rows, and Herdr's summary token. Configuring the plugin also configures `[ui.sidebar.spaces]` to append an owned listening ports row (`mahiro_workspace_ports`) beneath native Space branch/status rows. Workspace metadata publishes cross-client Git status (`mahiro_workspace_branch`, `mahiro_workspace_git_status`, `mahiro_workspace_worktree`) and listening TCP ports (`mahiro_workspace_ports`, formatted as e.g. `Ports 5173 · 8787`) without continuous background watchers or polling. Every adapter-owned token is set or cleared exactly once per patch. The adapter never clears `mahiro_sidebar_model`, `mahiro_sidebar_context`, or `mahiro_sidebar_provider`.
 
 An invocation is a short-lived Node process with a 30-second deadline. Each Herdr subprocess is limited to five seconds and 256 KiB of output. There is no retry, watcher, poller, daemon, pane-content read, transcript/session read, credential read, notification, sorting, network request, or settings UI.
 
