@@ -6,7 +6,7 @@ Mahiro Herdr is the integration umbrella; it is not a replacement Herdr runtime 
 
 ### Identity and existing installations
 
-The display/package name is now **Mahiro Herdr**. The GitHub repository, checkout directory, Herdr plugin ID `mahiro-herdr-sidebar`, executable path, metadata source IDs, and config/recovery directory intentionally remain unchanged in this local development change. Mahiro Mods already consumes that plugin ID and config directory. Keeping them stable preserves existing registry ownership, recovery snapshots, normalized caches, and Agy library imports without an uninstall/reinstall migration.
+The display/package name is now **Mahiro Herdr**. The GitHub repository, checkout directory, Herdr plugin ID `mahiro-herdr-sidebar`, executable path, metadata source IDs, and config/recovery directory intentionally remain unchanged in v0.6.0. Mahiro Mods already consumes that plugin ID and config directory. Keeping them stable preserves existing registry ownership, recovery snapshots, normalized caches, and Agy library imports without an uninstall/reinstall migration.
 
 The commands below still use the real registered ID, not the display name. Do not install a second `mahiro-herdr` plugin or rename runtime directories manually. A future repository/plugin-ID migration requires explicit approval and a verified consumer/config migration; the display rename is not that migration.
 
@@ -27,7 +27,7 @@ The source and isolated test suite support macOS and Linux. Mahiro has verified 
 For a released public version:
 
 ```sh
-herdr plugin install mahirocoko/mahiro-herdr-sidebar --ref v0.5.0
+herdr plugin install mahirocoko/mahiro-herdr-sidebar --ref v0.6.0
 herdr plugin action invoke configure --plugin mahiro-herdr-sidebar
 ```
 
@@ -58,7 +58,7 @@ The uninstall script passes its invoking checkout root to the workflow. Before d
 
 ## Architecture and boundary separation
 
-### Opt-in project actions prototype (unreleased)
+### Opt-in project actions (v0.6.0+)
 
 Project-specific quick actions now have a plain terminal picker, not a native
 menu extension. From a normal Herdr terminal in this Git project, run:
