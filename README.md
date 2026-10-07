@@ -112,11 +112,19 @@ not installed automatically for other users. The standalone picker was accepted
 by Mahiro, who subsequently reported the corrected native entry appeared to work.
 The later Manage and color additions still need his full interaction/visual check.
 
-This repository provides three distinct components:
+This repository provides four distinct components:
 
 1. **Read-only Herdr Adapter (`src/core.mjs`)**: The core plugin runtime. It reads normalized `codex.json`, `agy.json`, and `cursor.json` cache files and projects them into Herdr agent sidebar rows. It never writes to cache files, never collects provider data, and makes no network requests.
 2. **Optional Agy Statusline Quota Producer (`src/agy-statusline-producer.mjs`)**: An opt-in helper module for Agy CLI users. It consumes already-delivered statusline payloads, normalizes the quota map, and publishes snapshots atomically to `agy.json`. It never reads credentials, email, plan tier, transcripts, sessions, or raw provider payloads, never invokes `agy -p`, and makes no network requests.
 3. **Workspace Metadata Bridge (`src/workspace-metadata.mjs`, v0.4.0+)**: A focused module publishing a bounded, allowlisted cross-client projection of Git and listening port metadata for Herdr Web and sidebar display without replacing native Space rendering. It observes `herdr api snapshot`, inspects Git repository evidence deterministically, collects listening TCP ports per Space via bounded one-shot process-tree attribution (`lsof` + `ps` on macOS), and reports workspace metadata (`mahiro_workspace_branch`, `mahiro_workspace_git_status`, `mahiro_workspace_worktree`, `mahiro_workspace_ports`) via `herdr workspace report-metadata`.
+
+4. **Space Agent Renderer (`src/agent-renderer.mjs`, `src/renderer-runtime.mjs`)**: Display-only updater for agent logos/status **inside each Space**, never Agents. Source anatomy: one priority state mark beside the native Space name, independently brand-colored glyph + vendor name on the next row, then native branch/Git status and ports. Space mark precedence is blocked → working → unseen Done → idle → unknown; all live vendors across background tabs remain in the logo row. Nominal 250 ms animation, one-second inventory, ten-second TTL. Twenty-seven allowlisted workspace tokens are published in bounded chunks of at most sixteen, with per-chunk delta/renewal caching; no lifecycle, Agents grouping/title rewrite, Space movement, history or theme sync.
+
+### Renderer lifecycle and optional font
+
+Live configure and startup start the updater. `renderer-start` and `renderer-stop` are native actions. Stopping hides renderer-owned state marks and logos after token expiry, not the native Space name/branch/Git status/ports or Agents panel. Unknown/stale control endpoints are reported, never force-reclaimed by guessed PID or age.
+
+`renderer-font` installs the pinned derivative icon font and one owned mapping in an existing macOS Ghostty config, with exact original/applied recovery. The immutable original survives mapping-generation upgrades; a bounded previous-applied journal supports interrupted upgrades. It does not change the main font or install patched JetBrains Mono. Radar's MIT font is extended at U+E1BB with a faithful outline of Letta Code's official static front-frame mark (Apache-2.0), not a guessed logo; notices/provenance are under `assets/agent-icons`. The build-only generator uses isolated fonttools, not a runtime dependency. Unconfigured platforms keep explicitly generic glyph + readable vendor fallback. Successful installation is not live-render acceptance; reload/native glyph inspection is required. Restore rejects drift and retains shared font bytes.
 
 ## Open adapter inputs
 
@@ -168,9 +176,9 @@ Startup and manual refresh are stateless one-shot reconciliations. They read the
 
 Each invocation captures one system-monotonic sequence before inventory and uses it for every report. Mahiro's live Herdr 0.9.0 macOS verification confirmed that lower and equal sequences are silently ignored and metadata TTL expires from accepted publication time.
 
-The configured rows retain Herdr's native state/location and agent rows, then add externally owned model and context tokens, an explicit Agy shared-pool label, two family-grouped severity-colored quota rows, and Herdr's summary token. Configuring the plugin also configures `[ui.sidebar.spaces]` to append an owned listening ports row (`mahiro_workspace_ports`) beneath native Space branch/status rows. Workspace metadata publishes cross-client Git status (`mahiro_workspace_branch`, `mahiro_workspace_git_status`, `mahiro_workspace_worktree`) and listening TCP ports (`mahiro_workspace_ports`, formatted as e.g. `Ports 5173 · 8787`) without continuous background watchers or polling. Every adapter-owned token is set or cleared exactly once per patch. The adapter never clears `mahiro_sidebar_model`, `mahiro_sidebar_context`, or `mahiro_sidebar_provider`.
+The configured Agents rows retain native state/location/agent, model/context, Agy shared-pool, quota and summary rows. Space rows retain native name/branch/Git status and ports, plus a dedicated agent-logo/spinner/status row owned by the renderer. Quota/Git/ports metadata remains one-shot and separate from the animation owner. The adapter never clears `mahiro_sidebar_model`, `mahiro_sidebar_context`, or `mahiro_sidebar_provider`.
 
-An invocation is a short-lived Node process with a 30-second deadline. Each Herdr subprocess is limited to five seconds and 256 KiB of output. There is no retry, watcher, poller, daemon, pane-content read, transcript/session read, credential read, notification, sorting, network request, or settings UI.
+Quota/workspace invocations are short-lived Node processes with a 30-second deadline. Each Herdr subprocess is limited to five seconds and 256 KiB output. These adapters add no watcher/daemon/history reads. The separate agent renderer is the explicitly approved resident-updater exception, and does not expand their ownership or refresh policy.
 
 ## Configuration safety and recovery
 

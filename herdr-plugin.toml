@@ -28,6 +28,21 @@ title = "Refresh Mahiro sidebar metadata"
 command = ["sh", "-c", "exec node \"$HERDR_PLUGIN_ROOT/bin/mahiro-herdr.mjs\" refresh"]
 
 [[actions]]
+id = "renderer-start"
+title = "Start Space agent renderer"
+command = ["sh", "-c", "exec node \"$HERDR_PLUGIN_ROOT/bin/mahiro-herdr-renderer.mjs\" start"]
+
+[[actions]]
+id = "renderer-stop"
+title = "Stop Space agent renderer (marks expire)"
+command = ["sh", "-c", "exec node \"$HERDR_PLUGIN_ROOT/bin/mahiro-herdr-renderer.mjs\" stop"]
+
+[[actions]]
+id = "renderer-font"
+title = "Install agent icon font and Ghostty mapping"
+command = ["sh", "-c", "exec node \"$HERDR_PLUGIN_ROOT/bin/mahiro-herdr-renderer.mjs\" font-install"]
+
+[[actions]]
 id = "configure"
 title = "Configure Mahiro sidebar rows"
 command = ["sh", "-c", "exec node \"$HERDR_PLUGIN_ROOT/bin/mahiro-herdr.mjs\" configure-live"]

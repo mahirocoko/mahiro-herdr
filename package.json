@@ -17,6 +17,6 @@
   },
   "scripts": {
     "test": "node --test",
-    "check": "node --check bin/mahiro-herdr.mjs && node --check bin/mahiro-herdr-actions.mjs && node --check src/project-actions.mjs && node --check src/project-action-manager.mjs && node --check src/terminal-style.mjs && node --check src/core.mjs && node --check src/workflows.mjs && node --check src/agy-statusline-producer.mjs && node --check src/workspace-metadata.mjs && node --check src/runtime-helpers.mjs && node --test"
+    "check": "node --check bin/mahiro-herdr.mjs && node --check bin/mahiro-herdr-renderer.mjs && node --check src/agent-renderer.mjs && node --check src/renderer-runtime.mjs && node --check src/renderer-font.mjs && node --check bin/mahiro-herdr-actions.mjs && node --check src/project-actions.mjs && node --check src/project-action-manager.mjs && node --check src/terminal-style.mjs && node --check src/core.mjs && node --check src/workflows.mjs && node --check src/agy-statusline-producer.mjs && node --check src/workspace-metadata.mjs && node --check src/runtime-helpers.mjs && node --test"
   }
 }

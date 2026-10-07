@@ -12,12 +12,15 @@ import {
   restoreLive,
   uninstallWorkflow
 } from '../src/workflows.mjs'
+import { startRenderer, stopRenderer } from '../src/renderer-runtime.mjs'
+import { restoreRendererFont } from '../src/renderer-font.mjs'
 
 const command = process.argv[2]
 
 try {
   if (command === 'startup' || command === 'refresh') {
     await refresh()
+    if (command === 'startup') await startRenderer()
   } else if (command === 'event') {
     await eventRefresh()
   } else if (command === 'configure') {
@@ -25,8 +28,11 @@ try {
   } else if (command === 'restore') {
     await restoreConfig()
   } else if (command === 'configure-live') {
+    await startRenderer()
     await configureLive()
   } else if (command === 'restore-live') {
+    await stopRenderer()
+    await restoreRendererFont()
     await restoreLive()
   } else if (command === 'install' && process.argv[3]) {
     await installWorkflow(process.argv[3])
@@ -34,6 +40,8 @@ try {
     (command === 'uninstall-live' || command === 'uninstall') &&
     process.argv[3]
   ) {
+    await stopRenderer()
+    await restoreRendererFont()
     await uninstallWorkflow(process.argv[3])
   } else {
     throw new Error(

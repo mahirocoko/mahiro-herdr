@@ -3,6 +3,7 @@ import { chmod, lstat, mkdir, open, readFile, readdir, rename, rm, rmdir, unlink
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve as resolvePath } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { SPACE_RENDERER_ROWS } from './space-renderer-style.mjs'
 import {
   COMMAND_TIMEOUT_MS,
   INVOCATION_DEADLINE_MS,
@@ -83,7 +84,7 @@ rows = [
 [ui.sidebar.spaces] # ${OWNER}:spaces-owner
 row_gap = 0 # ${OWNER}:spaces-row-gap
 rows = [
-  ["state_icon", "workspace"],
+${SPACE_RENDERER_ROWS}
   ["branch", "git_status"],
   [{ token = "$mahiro_workspace_ports", fg = "#A5A8AB", dim = true }],
 ] # ${OWNER}:spaces-rows

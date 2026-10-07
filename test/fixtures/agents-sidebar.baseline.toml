@@ -1,0 +1,20 @@
+[ui.sidebar.agents] # mahiro-herdr:owner
+row_gap = 0 # mahiro-herdr:row-gap
+rows = [
+  ["state_icon", "machine", "workspace", "tab"],
+  ["agent"],
+  [{ token = "$mahiro_sidebar_model", fg = "#A5A8AB", dim = true }],
+  [{ token = "$mahiro_sidebar_context", fg = "#BEBEEE" }],
+  [{ token = "$mahiro_sidebar_agy_scope", fg = "#A5A8AB", dim = true }],
+  [
+    { token = "$mahiro_sidebar_q1_ok", fg = "#64CF64" },
+    { token = "$mahiro_sidebar_q1_warn", fg = "#FEE19C" },
+    { token = "$mahiro_sidebar_q1_critical", fg = "#F1689F" },
+  ],
+  [
+    { token = "$mahiro_sidebar_q2_ok", fg = "#64CF64" },
+    { token = "$mahiro_sidebar_q2_warn", fg = "#FEE19C" },
+    { token = "$mahiro_sidebar_q2_critical", fg = "#F1689F" },
+  ],
+  [{ token = "$summary", fg = "#A5A8AB", dim = true }],
+] # mahiro-herdr:rows

@@ -2,6 +2,7 @@ node_modules/
 .herdr-actions.lock/
 .herdr-actions-*.tmp
 .letta/
+.agent-state/learn/**/origin
 .DS_Store
 *.log
 
