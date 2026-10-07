@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process'
 import { chmod, copyFile, lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { ensureRendererRoot, rejectSymlinkAncestors } from './renderer-runtime.mjs'
+import { ensureRendererRoot, rejectSymlinkAncestors, startRenderer, stopRenderer } from './renderer-runtime.mjs'
 
 const FONT_SOURCE = fileURLToPath(new URL('../assets/agent-icons/MahiroHerdrAgentIcons-Regular.ttf', import.meta.url))
 const MAP = '# mahiro-herdr:font-begin\nfont-codepoint-map = U+E1A0-U+E1BB=Mahiro Herdr Agent Icons\n# mahiro-herdr:font-end\n'
@@ -112,3 +112,13 @@ const restoreFont = async env => {
 
 export const installRendererFont = (env = process.env, options = {}) => withFontLock(env, () => installFont(env, options))
 export const restoreRendererFont = (env = process.env) => withFontLock(env, () => restoreFont(env))
+
+// Explicit font action only: normal startup/configure must not edit terminal config.
+export const setupRendererFont = async (env = process.env, options = {}) => {
+  if (env.HERDR_ENV !== '1') throw new Error('font setup requires Herdr runtime')
+  const installed = await installRendererFont(env, options)
+  // The updater captures font-ready on startup; an already-ready process is stale.
+  await stopRenderer(env)
+  const renderer = await startRenderer(env)
+  return { ...installed, rendererReady: renderer.ready, message: 'Reload Configuration in Ghostty to display agent logos.' }
+}

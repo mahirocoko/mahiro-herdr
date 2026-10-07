@@ -1,6 +1,6 @@
 id = "mahiro-herdr"
 name = "Mahiro Herdr"
-version = "0.7.0"
+version = "0.7.1"
 min_herdr_version = "0.9.3"
 description = "Mahiro's Herdr integration: agent usage, Space agent status/icons, Git metadata and listening ports."
 platforms = ["macos", "linux"]

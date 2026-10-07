@@ -5,6 +5,7 @@ The canonical product, repository and runtime plugin identity is **Mahiro Herdr 
 This is an MIT-licensed, dependency-free repository providing a read-only Herdr adapter (`src/core.mjs`), an optional Agy-native statusline quota producer (`src/agy-statusline-producer.mjs`), and a workspace metadata bridge (`src/workspace-metadata.mjs`).
 
 - Use Node 22+ built-ins only and keep modules small.
+- Font onboarding is explicit consent: normal install/configure/startup never edits terminal font config. The `renderer-font` action installs/validates with existing guarded recovery, then restarts only its updater to reread `font-ready`; return a Ghostty Reload Configuration reminder. Unsupported/failed font installation must not stop the working updater. Test against isolated HOME only. Current automatic mapping is existing standard macOS Ghostty config, not every terminal/platform.
 - Use single quotes and omit semicolons in JavaScript.
 - Distinguish the four components:
   - `src/core.mjs` is strictly a read-only cache adapter for Herdr. It projects normalized cache files and coordinates lifecycle refresh.

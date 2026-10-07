@@ -27,9 +27,35 @@ The source and isolated test suite support macOS and Linux. Listening TCP ports 
 For a released public version:
 
 ```sh
-herdr plugin install mahirocoko/mahiro-herdr --ref v0.7.0
+herdr plugin install mahirocoko/mahiro-herdr --ref v0.7.1
 herdr plugin action invoke configure --plugin mahiro-herdr
 ```
+
+**Agent logos need a separate font step.** Normal install/configure starts the
+renderer but does not modify terminal configuration. Without the icon font,
+`⊙` / `◈` plus readable agent names are intentional fallback, not vendor logos.
+
+For **macOS + Ghostty**, explicitly install the bundled font/mapping:
+
+```sh
+herdr plugin action invoke renderer-font --plugin mahiro-herdr
+```
+
+Then use **Reload Configuration** in Ghostty. Automatic mapping currently
+requires an existing standard macOS Ghostty config. Linux/other terminal setup is
+not supported by this action. Without font setup the renderer uses generic
+fallback; after setup, each terminal displaying the shared Herdr session must
+resolve the custom glyphs itself—configuring Ghostty does not configure another
+terminal client.
+
+Since **v0.7.1**, the font action restarts the renderer automatically so it
+rereads `font-ready`. No separate renderer stop/start commands are needed.
+If still using v0.7.0, upgrade to v0.7.1 or manually stop/start the renderer
+after its older font action.
+
+If the entire agent row is missing rather than showing fallback, font setup alone
+is not the diagnosis: check the configure/renderer action logs first. A square or
+missing glyph after setup instead requires checking the terminal font/reload.
 
 To remove that installation, use Herdr's owning uninstall flow. Its manifest action restores the saved sidebar configuration before Herdr removes the plugin:
 

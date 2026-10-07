@@ -7,7 +7,7 @@ import net from 'node:net'
 import { configure } from '../src/core.mjs'
 import { SPACE_RENDERER_ROWS, VENDOR_COLORS } from '../src/space-renderer-style.mjs'
 import { FONT_GLYPHS, RENDERER_TOKENS, localCall, rendererFrame, publishRendererFrame } from '../src/agent-renderer.mjs'
-import { installRendererFont, restoreRendererFont } from '../src/renderer-font.mjs'
+import { installRendererFont, restoreRendererFont, setupRendererFont } from '../src/renderer-font.mjs'
 import { rendererStatus, runRenderer, startRenderer, stopRenderer } from '../src/renderer-runtime.mjs'
 
 const pane = (id, status = 'idle', extra = {}) => ({ pane_id: id, workspace_id: 'w1', terminal_id: `term-${id}`, agent: 'letta', display_agent: 'Letta', terminal_title_stripped: 'Mahiro Code', agent_status: status, ...extra })
@@ -231,6 +231,10 @@ test('renderer runtime: oversized control socket path fails before bind', async 
   } finally { await rm(home, { recursive: true, force: true }) }
 })
 
+test('font setup outside Herdr fails before installing or activating', async () => {
+  await assert.rejects(setupRendererFont({}), /font setup requires Herdr runtime/u)
+})
+
 test('renderer runtime: existing endpoint reused; native metadata published, persisted and cleared on stop', async () => {
   // Canonical macOS TMPDIR can be long: leave room for plugin/renderer/control.sock.
   const home = await realpath(await mkdtemp(join(tmpdir(), 'rlife-')))
@@ -266,6 +270,23 @@ test('renderer runtime: existing endpoint reused; native metadata published, per
     assert.ok(calls.filter(item => item.method !== 'session.snapshot').every(item => item.method === 'workspace.report_metadata'))
     const state = JSON.parse(await readFile(join(env.HERDR_PLUGIN_CONFIG_DIR, 'renderer', 'done-state.json'), 'utf8'))
     assert.equal(state.p1.heldDone, true)
+    assert.ok(calls.some(item => item.params?.tokens?.mh_ws_a0_name === '⊙ letta'))
+    // Unsupported installation must leave the existing renderer untouched.
+    await assert.rejects(setupRendererFont(env, { platform: 'linux' }), /macOS Ghostty only/u)
+    assert.equal((await rendererStatus(env)).pid, process.pid)
+    const fontConfig = join(home, 'Library', 'Application Support', 'com.mitchellh.ghostty', 'config')
+    await mkdir(join(home, 'Library', 'Application Support', 'com.mitchellh.ghostty'), { recursive: true })
+    await writeFile(fontConfig, 'font-family = Menlo\n')
+    await assert.rejects(setupRendererFont(env, { platform: 'darwin', validate: async () => { throw new Error('fixture validation failed') } }), /fixture validation failed/u)
+    assert.equal((await rendererStatus(env)).pid, process.pid)
+    assert.equal(await readFile(fontConfig, 'utf8'), 'font-family = Menlo\n')
+    const configured = await setupRendererFont(env, { platform: 'darwin', validate: async () => {} })
+    await running
+    assert.equal(configured.rendererReady, true)
+    assert.equal(configured.requiresTerminalReload, true)
+    assert.match(configured.message, /Reload Configuration/u)
+    assert.notEqual((await rendererStatus(env)).pid, process.pid, 'font setup launches a fresh updater, not the stale font=false process')
+    assert.ok(calls.some(item => item.params?.tokens?.mh_ws_a0_name === `${FONT_GLYPHS.letta} letta`))
     await stopRenderer(env)
     await running
     assert.ok(calls.some(item => item.method === 'workspace.report_metadata' && Object.values(item.params.tokens).every(value => value === null)))
