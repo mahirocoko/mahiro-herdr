@@ -1,6 +1,6 @@
 # Mahiro Herdr
 
-MIT-licensed open adapter that projects normalized external usage snapshots into Herdr's Agent sidebar, provides an optional native Agy statusline quota producer module, and publishes workspace Git metadata for Herdr Web. It uses Node.js built-ins only, has no package dependencies, and does not contact providers.
+MIT-licensed Herdr integration that projects normalized usage into Agents, shows per-agent status/icons beneath Spaces, publishes workspace Git metadata and macOS listening ports, and provides an optional Agy statusline quota producer. It uses Node.js built-ins only, has no runtime package dependencies, and does not contact providers.
 
 Mahiro Herdr is the integration umbrella; it is not a replacement Herdr runtime or a merged web app. Sidebar projection, workspace metadata, and future supported desktop actions have separate owners. Herdr Web remains a separate project, Mahiro Mods owns Letta lifecycle reporting, and Agent Halo owns Cursor quota collection.
 
@@ -27,7 +27,7 @@ The source and isolated test suite support macOS and Linux. Listening TCP ports 
 For a released public version:
 
 ```sh
-herdr plugin install mahirocoko/mahiro-herdr --ref v0.6.0
+herdr plugin install mahirocoko/mahiro-herdr --ref v0.7.0
 herdr plugin action invoke configure --plugin mahiro-herdr
 ```
 
