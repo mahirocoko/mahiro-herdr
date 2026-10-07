@@ -223,8 +223,17 @@ test('font generation upgrade retains immutable original and restores exactly', 
   } finally { await rm(home, { recursive: true, force: true }) }
 })
 
+test('renderer runtime: oversized control socket path fails before bind', async () => {
+  const home = await realpath(await mkdtemp(join(tmpdir(), 'rlong-')))
+  const env = { HOME: home, HERDR_ENV: '1', HERDR_PLUGIN_CONFIG_DIR: join(home, 'x'.repeat(108)) }
+  try {
+    await assert.rejects(runRenderer(env), /socket path exceeds platform byte limit/u)
+  } finally { await rm(home, { recursive: true, force: true }) }
+})
+
 test('renderer runtime: existing endpoint reused; native metadata published, persisted and cleared on stop', async () => {
-  const home = await realpath(await mkdtemp(join(tmpdir(), 'renderer-life-')))
+  // Canonical macOS TMPDIR can be long: leave room for plugin/renderer/control.sock.
+  const home = await realpath(await mkdtemp(join(tmpdir(), 'rlife-')))
   const socketPath = join(home, 'herdr.sock')
   const env = { HOME: home, HERDR_ENV: '1', HERDR_PLUGIN_CONFIG_DIR: join(home, 'plugin'), HERDR_SOCKET_PATH: socketPath }
   const calls = []
@@ -240,9 +249,13 @@ test('renderer runtime: existing endpoint reused; native metadata published, per
   })
   await new Promise(resolve => server.listen(socketPath, resolve))
   const running = runRenderer(env)
+  // Observe startup rejection immediately instead of waiting through the readiness loop.
+  let startupError
+  running.catch(error => { startupError = error })
   try {
     for (let attempt = 0; attempt < 30; attempt += 1) {
       await new Promise(resolve => setTimeout(resolve, 50))
+      if (startupError) throw startupError
       const ready = await rendererStatus(env).catch(() => null)
       if (ready?.ready) break
     }

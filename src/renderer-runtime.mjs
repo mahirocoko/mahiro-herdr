@@ -76,6 +76,10 @@ export const runRenderer = async (env = process.env) => {
   if (env.HERDR_ENV !== '1') throw new Error('renderer requires Herdr runtime')
   const root = await ensureRendererRoot(env)
   const path = controlPath(env)
+  // Conservative sockaddr_un budget for supported runtimes, including macOS CI Node22.
+  // Newer local OS/Node combinations can accept more; do not rely on that capability.
+  const socketByteLimit = process.platform === 'darwin' ? 103 : 107
+  if (Buffer.byteLength(path) > socketByteLimit) throw new Error('renderer control socket path exceeds platform byte limit')
   const nonce = randomUUID()
   let stopping = false
   let ready = false
