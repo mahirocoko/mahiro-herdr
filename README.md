@@ -16,11 +16,11 @@ The package remains `private: true` to prevent accidental npm publication. Distr
 
 - [Herdr](https://herdr.dev) 0.9.3 or newer for the current native project-action manifest
 - Node.js 22 or newer
-- macOS or Linux
+- macOS, Linux, or Windows
 - An external cache producer that implements the open adapter protocol, the optional native Agy statusline producer module, or the workspace metadata bridge
 - For Codex rows, an external pane-token producer that identifies eligible panes
 
-The source and isolated test suite support macOS and Linux. Listening TCP ports inspection is macOS-only; Linux clears that row while retaining Git/quota behavior. Mahiro has verified installation, configuration, events, refresh, and metadata behavior with Herdr 0.9.0 on macOS. GitHub Actions runs isolated Node 22 tests on `macos-latest` and `ubuntu-latest`; that Linux check does not claim live Herdr runtime integration.
+The source and isolated test suite support macOS, Linux, and Windows. Listening TCP ports inspection is macOS-only; Linux and Windows clear that row while retaining Git and quota behavior. Windows also runs the Space renderer with generic glyphs and project actions. Mahiro has verified installation, configuration, events, refresh, and metadata behavior with Herdr 0.9.0 on macOS. GitHub Actions runs isolated Node 22 tests on `macos-latest`, `ubuntu-latest`, and `windows-latest`; those Linux and Windows checks do not claim live Herdr runtime integration.
 
 ## Install
 
@@ -42,9 +42,9 @@ herdr plugin action invoke renderer-font --plugin mahiro-herdr
 ```
 
 Then use **Reload Configuration** in Ghostty. Automatic mapping currently
-requires an existing standard macOS Ghostty config. Linux/other terminal setup is
-not supported by this action. Without font setup the renderer uses generic
-fallback; after setup, each terminal displaying the shared Herdr session must
+requires an existing standard macOS Ghostty config. The `renderer-font` action
+is macOS-only. Linux, Windows, and other terminals keep the generic glyph
+fallback. Without font setup the renderer uses that fallback; after setup, each terminal displaying the shared Herdr session must
 resolve the custom glyphs itself—configuring Ghostty does not configure another
 terminal client.
 
@@ -72,6 +72,12 @@ npm run check
 ./install.sh
 ```
 
+On Windows, link the same checkout with:
+
+```powershell
+powershell -File .\install.ps1
+```
+
 The installer checks the JSON plugin registry, refuses the same plugin ID at another or ambiguous root, links a new checkout disabled, configures and reloads Herdr, then enables the plugin. Re-running it from the registered checkout is supported. Reinstall failure restores the exact captured pre-operation config and enabled state when ownership evidence remains safe.
 
 The plugin's Herdr uninstall action is intentionally restore-only because a running plugin must not unlink itself. To fully uninstall a locally linked development checkout, run:
@@ -79,6 +85,8 @@ The plugin's Herdr uninstall action is intentionally restore-only because a runn
 ```sh
 ./uninstall.sh
 ```
+
+On Windows, run `powershell -File .\uninstall.ps1` from that same checkout.
 
 The uninstall script passes its invoking checkout root to the workflow. Before disabling or changing configuration, the workflow verifies that Herdr's single same-ID registration resolves exactly to that root. This prevents an old clone from uninstalling a newer registration.
 
@@ -142,7 +150,7 @@ This repository provides four distinct components:
 
 1. **Read-only Herdr Adapter (`src/core.mjs`)**: The core plugin runtime. It reads normalized `codex.json`, `agy.json`, and `cursor.json` cache files and projects them into Herdr agent sidebar rows. It never writes to cache files, never collects provider data, and makes no network requests.
 2. **Optional Agy Statusline Quota Producer (`src/agy-statusline-producer.mjs`)**: An opt-in helper module for Agy CLI users. It consumes already-delivered statusline payloads, normalizes the quota map, and publishes snapshots atomically to `agy.json`. It never reads credentials, email, plan tier, transcripts, sessions, or raw provider payloads, never invokes `agy -p`, and makes no network requests.
-3. **Workspace Metadata Bridge (`src/workspace-metadata.mjs`, v0.4.0+)**: A focused module publishing a bounded, allowlisted cross-client projection of Git and listening port metadata for Herdr Web and sidebar display without replacing native Space rendering. It observes `herdr api snapshot`, inspects Git repository evidence deterministically, collects listening TCP ports per Space via bounded one-shot process-tree attribution (`lsof` + `ps` on macOS), and reports workspace metadata (`mahiro_workspace_branch`, `mahiro_workspace_git_status`, `mahiro_workspace_worktree`, `mahiro_workspace_ports`) via `herdr workspace report-metadata`.
+3. **Workspace Metadata Bridge (`src/workspace-metadata.mjs`, v0.4.0+)**: A focused module publishing a bounded, allowlisted cross-client projection of Git and listening port metadata for Herdr Web and sidebar display without replacing native Space rendering. It observes `herdr api snapshot`, inspects Git repository evidence deterministically, collects listening TCP ports per Space via bounded one-shot process-tree attribution (`lsof` + `ps` on macOS; Linux and Windows clear the ports row), and reports workspace metadata (`mahiro_workspace_branch`, `mahiro_workspace_git_status`, `mahiro_workspace_worktree`, `mahiro_workspace_ports`) via `herdr workspace report-metadata`.
 
 4. **Space Agent Renderer (`src/agent-renderer.mjs`, `src/renderer-runtime.mjs`)**: Space header shows the native name only, with no summary status/dot. Below it each pane gets one row with independently colored status and glyph/vendor-name cells; empty rows collapse. Eight slots follow native order without vendor deduplication/sorting; overflow uses the final slot for a remaining-agent count. Native highlight, branch/Git/ports, gap0 and Agents remain unchanged. Sixteen allowlisted inline tokens fit one ≤16-token patch per workspace, with delta/renewal caching, TTL10s, snapshots1s and nominal250ms animation. No lifecycle/history/theme/order changes.
 
@@ -176,7 +184,7 @@ The module `src/agy-statusline-producer.mjs` exports pure normalization and atom
 
 - **Input ground truth**: In Agy CLI 1.2.2, custom statusline commands receive a top-level `quota` map with bucket IDs `gemini-5h`, `gemini-weekly`, `3p-5h`, and `3p-weekly`.
 - **Pure normalization (`normalizeAgyQuota`)**: Maps the four exact IDs to `Gemini:5h`, `Gemini:7d`, `Claude-GPT:5h`, and `Claude-GPT:7d` in strict fixed order. Converts `remaining_fraction` to percentage points [0, 100], parses ISO 8601 `reset_time` with bounded `reset_in_seconds` fallback, and ignores unknown buckets and non-quota fields. If quota is absent or invalid, it returns `null` without touching the cache.
-- **Atomic publication (`publishAgyQuota` / `publishAgyStatusline`)**: Writes `{ fetched, failed: false, windows }` atomically to `agy.json` using unique temporary files and atomic rename. Enforces user-only permissions (`0o600` file, `0o700` dir) and refuses symlinks in every path component or non-regular targets/directories.
+- **Atomic publication (`publishAgyQuota` / `publishAgyStatusline`)**: Writes `{ fetched, failed: false, windows }` atomically to `agy.json` using unique temporary files and atomic rename. Enforces user-only permissions (`0o600` file, `0o700` dir) on POSIX. On Windows it does not treat `stat.mode` as group or other access, and it still refuses symlinks in every path component or non-regular targets/directories.
 - **120-second deduplication**: If the existing cache is valid and younger than 120 seconds, labels and remaining percentages match, and reset targets differ by no more than the same 120-second window, disk write and Herdr refresh are skipped. The reset tolerance prevents `reset_in_seconds` countdown payloads from becoming false changes.
 - **Changed or aged write**: If semantic windows change or the existing snapshot is 120+ seconds old, the producer writes the updated snapshot and triggers at most one Herdr refresh only when the runtime has both `HERDR_ENV=1` and a non-empty `HERDR_PANE_ID`. The default runtime refresh path has a five-second deadline; cache success survives its failure.
 - **Concurrency**: Multiple one-shot statusline processes race safely via unique temporary files and atomic rename without locks or destructive state.

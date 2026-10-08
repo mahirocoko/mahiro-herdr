@@ -1,10 +1,10 @@
 import { constants } from 'node:fs'
-import { open, realpath } from 'node:fs/promises'
+import { lstat, open, realpath } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
-import { runHerdr } from './runtime-helpers.mjs'
+import { runHerdr, samePath } from './runtime-helpers.mjs'
 
 const ACTION_FILE = '.herdr-actions.json'
 const MAX_BYTES = 64 * 1024
@@ -45,15 +45,25 @@ export const parseProjectActions = (text) => {
   return catalog.actions
 }
 
+const readOnlyFlags = () => {
+  let flags = constants.O_RDONLY
+  if (typeof constants.O_NONBLOCK === 'number') flags |= constants.O_NONBLOCK
+  if (typeof constants.O_NOFOLLOW === 'number') flags |= constants.O_NOFOLLOW
+  return flags
+}
+
 export const readProjectCatalog = async (project) => {
+  const catalogPath = join(project, ACTION_FILE)
   let file
   try {
-    file = await open(
-      join(project, ACTION_FILE),
-      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
-    )
+    if (typeof constants.O_NOFOLLOW !== 'number') {
+      const linked = await lstat(catalogPath)
+      if (linked.isSymbolicLink() || !linked.isFile()) throw new Error('Unsafe or oversized action catalog')
+    }
+    file = await open(catalogPath, readOnlyFlags())
   } catch (error) {
     if (error.code === 'ENOENT') return { actions: [], bytes: null }
+    if (error.code === 'EINVAL') throw new Error('Unsafe or oversized action catalog')
     throw error
   }
   try {
@@ -82,7 +92,8 @@ export const projectRoot = async (cwd) => {
   const result = spawnSync('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], {
     encoding: 'utf8',
     timeout: 5000,
-    maxBuffer: 64 * 1024
+    maxBuffer: 64 * 1024,
+    windowsHide: true
   })
   if (result.error || result.status !== 0)
     throw new Error('Caller pane must belong to a Git project')
@@ -114,7 +125,7 @@ export const callerProject = async (env, call, root = projectRoot) => {
   if (pane?.pane_id !== env.HERDR_PANE_ID || !pane.workspace_id || !pane.tab_id)
     throw new Error('Caller identity unavailable')
   const cwd = pane.foreground_cwd || pane.cwd
-  if (typeof cwd !== 'string' || !cwd.startsWith('/'))
+  if (typeof cwd !== 'string' || !isAbsolute(cwd))
     throw new Error('Caller project cwd unavailable')
   return {
     project: await root(cwd),
@@ -125,6 +136,17 @@ export const callerProject = async (env, call, root = projectRoot) => {
 
 export const commandText = (argv) =>
   argv.map((arg) => `'${arg.replaceAll("'", "'\\''")}'`).join(' ')
+
+const quoteCmd = (arg) => (arg.length === 0 ? '""' : `"${arg.replaceAll('"', '""')}"`)
+
+const quotePowerShell = (arg) => `'${arg.replaceAll("'", "''")}'`
+
+export const paneCommandText = (argv, shell = process.platform === 'win32' ? 'powershell' : 'posix') => {
+  if (shell === 'posix') return commandText(argv)
+  if (shell === 'cmd') return argv.map(quoteCmd).join(' ')
+  if (shell === 'powershell') return `& ${argv.map(quotePowerShell).join(' ')}`
+  throw new Error('unsupported pane shell')
+}
 
 export const nativeActionContext = async (env, call, root = projectRoot) => {
   if (env.HERDR_ENV !== '1' || env.HERDR_PLUGIN_ID !== 'mahiro-herdr')
@@ -148,7 +170,7 @@ export const nativeActionContext = async (env, call, root = projectRoot) => {
   )
   if (
     context.workspaceId !== workspaceId ||
-    (env.MAHIRO_ACTION_CONTEXT && context.project !== supplied.project)
+    (env.MAHIRO_ACTION_CONTEXT && !samePath(context.project, supplied.project))
   )
     throw new Error('Native invocation project/workspace changed')
   return context
@@ -183,7 +205,7 @@ export const launchProjectAction = async (
   if (
     caller?.pane_id !== context.callerPaneId ||
     caller.workspace_id !== context.workspaceId ||
-    (await root(caller.foreground_cwd || caller.cwd)) !== context.project
+    !samePath(await root(caller.foreground_cwd || caller.cwd), context.project)
   ) {
     throw new Error('Caller workspace/project changed; reopen the picker')
   }
@@ -223,7 +245,7 @@ export const launchProjectAction = async (
         pane.workspace_id !== context.workspaceId ||
         pane.tab_id !== tabId ||
         pane.agent ||
-        (await realpath(pane.foreground_cwd || pane.cwd)) !== context.project
+        !samePath(await realpath(pane.foreground_cwd || pane.cwd), context.project)
       ) {
         throw new Error('New terminal ownership/cwd changed')
       }
@@ -239,7 +261,7 @@ export const launchProjectAction = async (
         break
       await sleep(100)
     }
-    call(['pane', 'run', paneId, commandText(action.argv)])
+    call(['pane', 'run', paneId, paneCommandText(action.argv)])
     if (options.focus !== false) call(['tab', 'focus', tabId])
   } catch (error) {
     throw new Error(

@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { chmod, mkdir, mkdtemp, readFile, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import test from 'node:test'
 
 import {
@@ -19,9 +19,11 @@ import {
   readUsageCache,
   refresh,
   refreshPaneMetadata,
-  restoreConfig
+  restoreConfig,
+  herdrConfigPath
 } from '../src/core.mjs'
 import { configureLive, installWorkflow, restoreLive, uninstallWorkflow } from '../src/workflows.mjs'
+import { writeNodeStub } from './stub-executable.mjs'
 
 const roots = []
 
@@ -69,7 +71,7 @@ async function stubHerdr(setup, agents = [], plugins = []) {
   await writeFile(inventory, JSON.stringify({ id: 'cli:agent:list', result: { agents } }))
   await writeFile(registry, JSON.stringify({ plugins }))
   await writeFile(failures, JSON.stringify([]))
-  await writeFile(executable, `#!/usr/bin/env node
+  const herdrBin = await writeNodeStub(executable, `#!/usr/bin/env node
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 const args = process.argv.slice(2)
 const command = args.join(' ')
@@ -124,7 +126,6 @@ if (failure?.afterMutation) {
   process.exit(1)
 }
 `)
-  await chmod(executable, 0o755)
   return {
     log,
     inventory,
@@ -132,7 +133,7 @@ if (failure?.afterMutation) {
     failures,
     env: {
       ...setup.env,
-      HERDR_BIN_PATH: executable,
+      HERDR_BIN_PATH: herdrBin,
       HERDR_TEST_LOG: log,
       HERDR_TEST_INVENTORY: inventory,
       HERDR_TEST_REGISTRY: registry,
@@ -412,10 +413,13 @@ test('cache reads reject FIFO, symlink, oversize, and timestamps validated after
   await writeFile(path, 'x'.repeat(64 * 1024 + 1))
   assert.equal(await readUsageCache(path, () => now), null)
   await rm(path)
-  const fifo = spawnSync('mkfifo', [path])
-  assert.equal(fifo.status, 0)
+  if (process.platform === 'win32') await mkdir(path)
+  else {
+    const fifo = spawnSync('mkfifo', [path])
+    assert.equal(fifo.status, 0)
+  }
   assert.equal(await readUsageCache(path, () => now), null)
-  await rm(path)
+  await rm(path, { recursive: true, force: true })
   await writeCache(path, [], now + 1)
   assert.equal(await readUsageCache(path, () => now), null)
 })
@@ -579,7 +583,7 @@ test('configure-live reload failure restores exact no-op pre-invocation state', 
   await assert.rejects(configureLive(stub.env, { clock: () => Date.now(), sequence: () => '575' }), /injected failure/u)
   assert.deepEqual(await readFile(setup.herdrConfig), priorConfig)
   assert.deepEqual(await readFile(snapshotPath), priorSnapshot)
-  assert.equal((await stat(setup.herdrConfig)).mode & 0o777, 0o640)
+  if (process.platform !== 'win32') assert.equal((await stat(setup.herdrConfig)).mode & 0o777, 0o640)
 })
 
 test('install failures restore configuration and registry transactionally', async () => {
@@ -641,7 +645,7 @@ test('failed reinstall restores exact prior configured and enabled state', async
   await assert.rejects(installWorkflow(setup.root, stub.env, { clock: () => Date.now(), sequence: () => '675' }), /injected failure/u)
   assert.deepEqual(await readFile(setup.herdrConfig), priorConfig)
   assert.deepEqual(await readFile(snapshotPath), priorSnapshot)
-  assert.equal((await stat(setup.herdrConfig)).mode & 0o777, 0o640)
+  if (process.platform !== 'win32') assert.equal((await stat(setup.herdrConfig)).mode & 0o777, 0o640)
   assert.equal(JSON.parse(await readFile(stub.registry, 'utf8')).plugins[0].enabled, true)
 })
 
@@ -717,7 +721,7 @@ test('unlink failure with same-root registration restores exact prior state', as
   await assert.rejects(uninstallWorkflow(setup.root, stub.env, { clock: () => Date.now(), sequence: () => '825' }), /injected failure/u)
   assert.deepEqual(await readFile(setup.herdrConfig), priorConfig)
   assert.deepEqual(await readFile(snapshotPath), priorSnapshot)
-  assert.equal((await stat(setup.herdrConfig)).mode & 0o777, 0o640)
+  if (process.platform !== 'win32') assert.equal((await stat(setup.herdrConfig)).mode & 0o777, 0o640)
   assert.equal(JSON.parse(await readFile(stub.registry, 'utf8')).plugins[0].enabled, true)
 })
 
@@ -775,7 +779,7 @@ test('restore action reload failure restores exact applied config and snapshot',
   await assert.rejects(restoreLive(stub.env, { clock: () => Date.now(), sequence: () => '875' }), /injected failure/u)
   assert.deepEqual(await readFile(setup.herdrConfig), priorConfig)
   assert.deepEqual(await readFile(snapshotPath), priorSnapshot)
-  assert.equal((await stat(setup.herdrConfig)).mode & 0o777, 0o640)
+  if (process.platform !== 'win32') assert.equal((await stat(setup.herdrConfig)).mode & 0o777, 0o640)
 })
 
 test('manifest uses stateless event entrypoint and shell scripts contain no Herdr calls', async () => {
@@ -789,7 +793,8 @@ test('manifest uses stateless event entrypoint and shell scripts contain no Herd
   assert.equal(packageJson.license, 'MIT')
   assert.equal(packageJson.private, true)
   assert.match(license, /^MIT License/u)
-  assert.equal((manifest.match(/ event"\]/gu) || []).length, 3)
+  assert.equal((manifest.match(/"event"\]/gu) || []).length, 3)
+  assert.match(manifest, /"windows"/u)
   assert.match(manifest, /configure-live/u)
   assert.match(manifest, /restore-live/u)
   assert.doesNotMatch(manifest, /uninstall-live/u)
@@ -811,4 +816,12 @@ test('refreshPaneMetadata exports focused pane-only seam', async () => {
   assert.equal(entries.filter(c => c[0] === 'pane').length, 1)
   assert.equal(entries.filter(c => c[0] === 'workspace').length, 0)
   assert.equal(entries.filter(c => c[0] === 'api' && c[1] === 'snapshot').length, 0)
+})
+
+test('herdr config path follows the host config directory', () => {
+  if (process.platform === 'win32') {
+    assert.equal(herdrConfigPath({ APPDATA: 'C:\\herdr-appdata' }), resolve('C:\\herdr-appdata\\herdr\\config.toml'))
+    return
+  }
+  assert.equal(herdrConfigPath({ HOME: '/herdr-home' }), resolve('/herdr-home/.config/herdr/config.toml'))
 })

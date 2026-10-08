@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import test from 'node:test'
+
+import { writeNodeStub } from './stub-executable.mjs'
 
 import {
   MAX_WORKSPACES,
@@ -80,7 +83,7 @@ async function stubHerdrWithSnapshot(setup, snapshotData, agents = []) {
   await writeFile(registry, JSON.stringify({ plugins: [] }))
   await writeFile(failures, JSON.stringify([]))
 
-  await writeFile(executable, `#!/usr/bin/env node
+  const herdrBin = await writeNodeStub(executable, `#!/usr/bin/env node
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 const args = process.argv.slice(2)
 const command = args.join(' ')
@@ -107,7 +110,6 @@ if (args[0] === 'agent' && args[1] === 'list') {
   process.stdout.write(readFileSync(process.env.HERDR_TEST_REGISTRY, 'utf8'))
 }
 `)
-  await chmod(executable, 0o755)
 
   return {
     log,
@@ -116,7 +118,7 @@ if (args[0] === 'agent' && args[1] === 'list') {
     failures,
     env: {
       ...setup.env,
-      HERDR_BIN_PATH: executable,
+      HERDR_BIN_PATH: herdrBin,
       HERDR_TEST_LOG: log,
       HERDR_TEST_INVENTORY: inventory,
       HERDR_TEST_SNAPSHOT: snapshotFile,
@@ -376,25 +378,27 @@ test('git inspection: linked worktree detection and label without leaking absolu
 
 test('unsafe/oversized: git command exceeding buffer limit fails closed to all-clear', async () => {
   const setup = await fixture()
-  const fakeGit = join(setup.root, 'fake-git.sh')
-  await writeFile(fakeGit, `#!/bin/sh
-if [ "$1" = "rev-parse" ]; then
-  echo "true"
-  echo "/tmp/fake-repo"
-  echo ".git"
-  echo ".git"
-  exit 0
-elif [ "$1" = "symbolic-ref" ]; then
-  echo "main"
-  exit 0
-elif [ "$1" = "status" ]; then
-  # Output > 256 KiB
-  yes "M overly_long_file_path_for_buffer_overflow_test_abcdefghijklmnopqrstuvwxyz" | head -n 10000
-  exit 0
-fi
-exit 1
+  const fakeGit = await writeNodeStub(join(setup.root, 'fake-git.mjs'), `const args = process.argv.slice(2)
+const command = args[0]
+if (command === 'rev-parse') {
+  process.stdout.write('true\\n/tmp/fake-repo\\n.git\\n.git\\n')
+  process.exit(0)
+}
+if (command === 'symbolic-ref') {
+  process.stdout.write('main\\n')
+  process.exit(0)
+}
+if (command === 'status') {
+  const line = 'M overly_long_file_path_for_buffer_overflow_test_abcdefghijklmnopqrstuvwxyz\\n'
+  let written = 0
+  while (written < 300 * 1024) {
+    process.stdout.write(line)
+    written += line.length
+  }
+  process.exit(0)
+}
+process.exit(1)
 `)
-  await chmod(fakeGit, 0o755)
 
   const meta = inspectGitRepository(setup.root, { gitBin: fakeGit })
   assert.equal(meta, null)
@@ -979,7 +983,7 @@ test('initialization cycle smoke: core and workspace-metadata import cleanly in 
     '-e',
     "import * as core from './src/core.mjs'; import * as ws from './src/workspace-metadata.mjs'; import * as rt from './src/runtime-helpers.mjs'; if (!core.refresh || !ws.reconcileWorkspaces || !rt.runHerdr) process.exit(1)"
   ], {
-    cwd: new URL('..', import.meta.url).pathname,
+    cwd: fileURLToPath(new URL('..', import.meta.url)),
     encoding: 'utf8'
   })
   assert.equal(r1.status, 0, `import core then workspace-metadata failed: ${r1.stderr}`)
@@ -990,7 +994,7 @@ test('initialization cycle smoke: core and workspace-metadata import cleanly in 
     '-e',
     "import * as ws from './src/workspace-metadata.mjs'; import * as core from './src/core.mjs'; import * as rt from './src/runtime-helpers.mjs'; if (!core.refresh || !ws.reconcileWorkspaces || !rt.runHerdr) process.exit(1)"
   ], {
-    cwd: new URL('..', import.meta.url).pathname,
+    cwd: fileURLToPath(new URL('..', import.meta.url)),
     encoding: 'utf8'
   })
   assert.equal(r2.status, 0, `import workspace-metadata then core failed: ${r2.stderr}`)
