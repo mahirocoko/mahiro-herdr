@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
-import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+
+import { writeNodeStub } from './stub-executable.mjs'
 
 import { agyMetadata, readUsageCache } from '../src/core.mjs'
 import {
@@ -369,9 +371,12 @@ test('mode, path, and symlink safety', async () => {
     clock: () => now
   })
   const fileStat = await stat(setup.cachePath)
-  assert.equal(fileStat.mode & 0o777, 0o600)
+  assert.equal(fileStat.isFile(), true)
+  assert.equal(fileStat.isSymbolicLink(), false)
+  if (process.platform !== 'win32') assert.equal(fileStat.mode & 0o777, 0o600)
   const dirStat = await stat(setup.cacheDir)
-  assert.equal(dirStat.mode & 0o777, 0o700)
+  assert.equal(dirStat.isDirectory(), true)
+  if (process.platform !== 'win32') assert.equal(dirStat.mode & 0o777, 0o700)
 
   // Refuse symlink target
   const symlinkPath = join(setup.cacheDir, 'symlink-target.json')
@@ -413,10 +418,14 @@ test('mode, path, and symlink safety', async () => {
   const sharedDir = join(setup.root, 'shared-dir')
   await mkdir(sharedDir, { mode: 0o755 })
   const sharedMode = (await stat(sharedDir)).mode & 0o777
-  await assert.rejects(
-    publishAgyQuota(payload, { cachePath: join(sharedDir, 'agy.json'), clock: () => now }),
-    /without user-only permissions/
-  )
+  if (process.platform === 'win32') {
+    await publishAgyQuota(payload, { cachePath: join(sharedDir, 'agy.json'), clock: () => now })
+  } else {
+    await assert.rejects(
+      publishAgyQuota(payload, { cachePath: join(sharedDir, 'agy.json'), clock: () => now }),
+      /without user-only permissions/
+    )
+  }
   assert.equal((await stat(sharedDir)).mode & 0o777, sharedMode)
 
   await assert.rejects(
@@ -539,7 +548,7 @@ test('concurrent publication validity preserves an atomic winner', async () => {
   const fileStat = await lstat(setup.cachePath)
   assert.equal(fileStat.isFile(), true)
   assert.equal(fileStat.isSymbolicLink(), false)
-  assert.equal(fileStat.mode & 0o777, 0o600)
+  if (process.platform !== 'win32') assert.equal(fileStat.mode & 0o777, 0o600)
 
   const content = await readFile(setup.cachePath, 'utf8')
   const parsed = JSON.parse(content)
@@ -590,7 +599,7 @@ test('changed Agy payload publication refresh is pane-only: zero api snapshot, z
   const agents = [{ pane_id: 'w1:p1', workspace_id: 'w1', agent: 'agy', tokens: {} }]
   await writeFile(inventory, JSON.stringify({ id: 'cli:agent:list', result: { agents } }))
   await writeFile(log, '')
-  await writeFile(executable, `#!/usr/bin/env node
+  const herdrBin = await writeNodeStub(executable, `#!/usr/bin/env node
 import { appendFileSync, readFileSync } from 'node:fs'
 const args = process.argv.slice(2)
 appendFileSync(process.env.HERDR_TEST_LOG, JSON.stringify(args) + '\\n')
@@ -604,7 +613,6 @@ if (args[0] === 'agent' && args[1] === 'list') {
   // accepted
 }
 `)
-  await chmod(executable, 0o755)
 
   const payload = {
     quota: {
@@ -615,7 +623,7 @@ if (args[0] === 'agent' && args[1] === 'list') {
   const env = {
     ...setup.env,
     PATH: process.env.PATH,
-    HERDR_BIN_PATH: executable,
+    HERDR_BIN_PATH: herdrBin,
     HERDR_TEST_LOG: log,
     HERDR_TEST_INVENTORY: inventory,
     HERDR_ENV: '1',

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
@@ -6,9 +7,9 @@ import { join } from 'node:path'
 import net from 'node:net'
 import { configure } from '../src/core.mjs'
 import { SPACE_RENDERER_ROWS, VENDOR_COLORS } from '../src/space-renderer-style.mjs'
-import { FONT_GLYPHS, RENDERER_TOKENS, localCall, rendererFrame, publishRendererFrame } from '../src/agent-renderer.mjs'
+import { FONT_GLYPHS, RENDERER_TOKENS, herdrApiEndpoint, localCall, rendererFrame, publishRendererFrame } from '../src/agent-renderer.mjs'
 import { installRendererFont, restoreRendererFont, setupRendererFont } from '../src/renderer-font.mjs'
-import { rendererStatus, runRenderer, startRenderer, stopRenderer } from '../src/renderer-runtime.mjs'
+import { rendererControlPath, rendererStatus, runRenderer, startRenderer, stopRenderer } from '../src/renderer-runtime.mjs'
 
 const pane = (id, status = 'idle', extra = {}) => ({ pane_id: id, workspace_id: 'w1', terminal_id: `term-${id}`, agent: 'letta', display_agent: 'Letta', terminal_title_stripped: 'Mahiro Code', agent_status: status, ...extra })
 const snapshot = agents => ({ agents, workspaces: [{ workspace_id: 'w1', label: 'Project' }, { workspace_id: 'w2', label: 'Feature', worktree: { is_linked_worktree: true } }] })
@@ -43,8 +44,9 @@ test('renderer placement: Agents block equals accepted pre-renderer baseline; on
     await writeFile(config, '[ui]\nstatus_indicators = "symbols"\n')
     await configure(env)
     const text = await readFile(config, 'utf8')
-    const agents = text.slice(text.indexOf('[ui.sidebar.agents]'), text.indexOf('[ui.sidebar.spaces]')).trim()
-    const baseline = (await readFile(new URL('./fixtures/agents-sidebar.baseline.toml', import.meta.url), 'utf8')).trim()
+    const normalize = value => value.replace(/\r\n/g, '\n').trim()
+    const agents = normalize(text.slice(text.indexOf('[ui.sidebar.agents]'), text.indexOf('[ui.sidebar.spaces]')))
+    const baseline = normalize(await readFile(new URL('./fixtures/agents-sidebar.baseline.toml', import.meta.url), 'utf8'))
     assert.equal(agents, baseline)
     const spaces = text.slice(text.indexOf('[ui.sidebar.spaces]'))
     assert.ok(spaces.includes('row_gap = 0 # mahiro-herdr:spaces-row-gap'))
@@ -167,9 +169,11 @@ test('renderer: diff writes have TTL, only owned tokens, no lifecycle/quota muta
   assert.ok(calls.slice(4).every(item => Object.values(item.params.tokens).every(value => value === null)))
 })
 
+const transportPath = root => process.platform === 'win32' ? `\\\\.\\pipe\\mahiro-herdr-test-${randomUUID()}` : join(root, 'test.sock')
+
 test('renderer: local transport checks response identity and rejects truncation', async () => {
   const root = await mkdtemp(join(tmpdir(), 'renderer-transport-'))
-  const path = join(root, 'test.sock')
+  const path = transportPath(root)
   const server = net.createServer(socket => { socket.on('error', () => {}); socket.once('data', () => socket.end('{"id":"wrong","result":{}}\n')) })
   await new Promise(resolve => server.listen(path, resolve))
   try { await assert.rejects(localCall(path, { id: 'correct' }), /identity/u) }
@@ -227,8 +231,29 @@ test('renderer runtime: oversized control socket path fails before bind', async 
   const home = await realpath(await mkdtemp(join(tmpdir(), 'rlong-')))
   const env = { HOME: home, HERDR_ENV: '1', HERDR_PLUGIN_CONFIG_DIR: join(home, 'x'.repeat(108)) }
   try {
+    if (process.platform === 'win32') {
+      const longPath = rendererControlPath(env)
+      const shortPath = rendererControlPath({ ...env, HERDR_PLUGIN_CONFIG_DIR: join(home, 'plugin') })
+      assert.ok(longPath.length < 256)
+      assert.equal(longPath.length, shortPath.length)
+      assert.notEqual(longPath, shortPath)
+      assert.match(longPath, /^\\\\\.\\pipe\\mahiro-herdr-[0-9a-f]{16}$/u)
+      return
+    }
     await assert.rejects(runRenderer(env), /socket path exceeds platform byte limit/u)
   } finally { await rm(home, { recursive: true, force: true }) }
+})
+
+test('herdr api endpoint maps bare Windows pipe names', () => {
+  if (process.platform === 'win32') {
+    assert.equal(herdrApiEndpoint('herdr.sock'), '\\\\.\\pipe\\herdr.sock')
+    assert.equal(herdrApiEndpoint('\\\\.\\pipe\\herdr.sock'), '\\\\.\\pipe\\herdr.sock')
+    assert.equal(herdrApiEndpoint('C:\\Users\\example\\herdr.sock'), '\\\\.\\pipe\\C:\\Users\\example\\herdr.sock')
+    assert.throws(() => herdrApiEndpoint(''), /unavailable/u)
+    assert.throws(() => herdrApiEndpoint('foo\\bar'), /not a pipe name or absolute path/u)
+    return
+  }
+  assert.equal(herdrApiEndpoint('/tmp/herdr.sock'), '/tmp/herdr.sock')
 })
 
 test('font setup outside Herdr fails before installing or activating', async () => {
@@ -238,7 +263,7 @@ test('font setup outside Herdr fails before installing or activating', async () 
 test('renderer runtime: existing endpoint reused; native metadata published, persisted and cleared on stop', async () => {
   // Canonical macOS TMPDIR can be long: leave room for plugin/renderer/control.sock.
   const home = await realpath(await mkdtemp(join(tmpdir(), 'rlife-')))
-  const socketPath = join(home, 'herdr.sock')
+  const socketPath = transportPath(home)
   const env = { HOME: home, HERDR_ENV: '1', HERDR_PLUGIN_CONFIG_DIR: join(home, 'plugin'), HERDR_SOCKET_PATH: socketPath }
   const calls = []
   let current = snapshot([pane('p1', 'done')])

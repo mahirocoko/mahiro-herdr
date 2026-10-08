@@ -8,6 +8,7 @@ import test from 'node:test'
 import {
   callerProject,
   commandText,
+  paneCommandText,
   herdrClient,
   launchProjectAction,
   nativeActionContext,
@@ -162,6 +163,15 @@ test('catalog rejects duplicate IDs, arbitrary fields and terminal controls', ()
 })
 
 test('shell quoting preserves literal argv without executing metacharacters', () => {
+  if (process.platform === 'win32') {
+    const literal = "a'b | $not space"
+    const argv = ['Write-Output', literal]
+    const result = spawnSync('powershell.exe', ['-NoProfile', '-Command', paneCommandText(argv, 'powershell')], { encoding: 'buffer' })
+    assert.equal(result.status, 0)
+    const decoded = result.stdout.includes(0) ? result.stdout.toString('utf16le') : result.stdout.toString('utf8')
+    assert.equal(decoded.replace(/^\uFEFF/u, '').trim(), literal)
+    return
+  }
   const result = spawnSync('/bin/sh', ['-c', commandText(action.argv)], {
     encoding: 'utf8'
   })
@@ -222,7 +232,7 @@ test('launch targets returned new pane in same workspace, then focuses its tab',
   )
   assert.deepEqual(
     calls.find((args) => args[1] === 'run'),
-    ['pane', 'run', 'w1:p2', commandText(action.argv)]
+    ['pane', 'run', 'w1:p2', paneCommandText(action.argv)]
   )
   assert.deepEqual(calls.at(-1), ['tab', 'focus', 'w1:t2'])
 })

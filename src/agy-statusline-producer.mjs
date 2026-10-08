@@ -1,8 +1,10 @@
 import { chmod, lstat, mkdir, rename, rm, writeFile } from 'node:fs/promises'
+import { setTimeout as delay } from 'node:timers/promises'
 import { dirname, isAbsolute, join, parse as parsePath, resolve as resolvePath, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
 import { readUsageCache, refreshPaneMetadata, sanitizeToken, usageCacheDir } from './core.mjs'
+import { privateDirectory } from './runtime-helpers.mjs'
 
 export const DEFAULT_CACHE_FILENAME = 'agy.json'
 export const DEDUPE_TTL_MS = 120 * 1000
@@ -140,7 +142,7 @@ async function verifyCacheSafety(targetPath) {
     if (dirStat.isSymbolicLink() || !dirStat.isDirectory()) {
       throw new Error(`refusing symlink or non-directory cache directory: ${dir}`)
     }
-    if ((dirStat.mode & 0o077) !== 0) {
+    if (!privateDirectory(dirStat)) {
       throw new Error(`refusing cache directory without user-only permissions: ${dir}`)
     }
   }
@@ -164,7 +166,7 @@ async function atomicWriteCache(targetPath, bytes) {
   await mkdir(dir, { recursive: true, mode: 0o700 })
   await verifyDirectoryChain(dir)
   const dirStat = await lstat(dir)
-  if ((dirStat.mode & 0o077) !== 0) {
+  if (!privateDirectory(dirStat)) {
     throw new Error(`refusing cache directory without user-only permissions: ${dir}`)
   }
 
@@ -181,7 +183,16 @@ async function atomicWriteCache(targetPath, bytes) {
   try {
     await writeFile(temporary, bytes, { mode: 0o600, flag: 'wx' })
     await chmod(temporary, 0o600)
-    await rename(temporary, targetPath)
+    const attempts = process.platform === 'win32' ? 8 : 1
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        await rename(temporary, targetPath)
+        break
+      } catch (error) {
+        if (process.platform !== 'win32' || !['EPERM', 'EBUSY', 'EACCES'].includes(error.code) || attempt === attempts - 1) throw error
+        await delay(10 * (attempt + 1))
+      }
+    }
   } catch (error) {
     await rm(temporary, { force: true }).catch(() => {})
     throw error

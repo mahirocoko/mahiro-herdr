@@ -1,5 +1,7 @@
 import { resolve } from 'node:path'
 
+import { samePath } from './runtime-helpers.mjs'
+
 import {
   captureConfigState,
   clearOwnedMetadata,
@@ -41,7 +43,7 @@ function findPlugin(output) {
 
 function requireSameRoot(plugin, absoluteRoot, operation) {
   const registeredRoot = pluginRoot(plugin)
-  if (typeof registeredRoot !== 'string' || resolve(registeredRoot) !== absoluteRoot) {
+  if (typeof registeredRoot !== 'string' || !samePath(registeredRoot, absoluteRoot)) {
     throw new Error(`refusing ${operation}: plugin ID is linked to a different or ambiguous root`)
   }
 }

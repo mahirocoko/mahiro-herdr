@@ -1,15 +1,32 @@
 import net from 'node:net'
 import { spawn } from 'node:child_process'
 import { chmod, lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
-import { dirname, isAbsolute, join } from 'node:path'
+import { homedir } from 'node:os'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { localCall, rendererFrame, rendererSocketPath, publishRendererFrame } from './agent-renderer.mjs'
+import { privateDirectory } from './runtime-helpers.mjs'
+
+const pluginConfigDir = env => {
+  if (env.HERDR_PLUGIN_CONFIG_DIR) return env.HERDR_PLUGIN_CONFIG_DIR
+  if (process.platform === 'win32') return join(env.APPDATA || join(homedir(), 'AppData', 'Roaming'), 'herdr', 'plugins', 'config', 'mahiro-herdr')
+  return join(env.HOME || homedir(), '.config', 'herdr', 'plugins', 'config', 'mahiro-herdr')
+}
 
 export const rendererRoot = env => {
-  const root = join(env.HERDR_PLUGIN_CONFIG_DIR || join(env.HOME, '.config', 'herdr', 'plugins', 'config', 'mahiro-herdr'), 'renderer')
+  const root = join(pluginConfigDir(env), 'renderer')
   if (!isAbsolute(root)) throw new Error('renderer state root must be absolute')
   return root
+}
+
+const pipeEndpoint = path => path.startsWith('\\\\.\\pipe\\') || path.startsWith('\\\\?\\pipe\\')
+
+export const rendererControlPath = env => {
+  const root = rendererRoot(env)
+  if (process.platform !== 'win32') return join(root, 'control.sock')
+  const digest = createHash('sha256').update(resolve(root)).digest('hex').slice(0, 16)
+  return `\\\\.\\pipe\\mahiro-herdr-${digest}`
 }
 
 export const rejectSymlinkAncestors = async path => {
@@ -26,11 +43,11 @@ export const ensureRendererRoot = async env => {
   await rejectSymlinkAncestors(root)
   await mkdir(root, { recursive: true, mode: 0o700 })
   const stat = await lstat(root)
-  if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o077)) throw new Error('unsafe renderer state directory')
+  if (!privateDirectory(stat)) throw new Error('unsafe renderer state directory')
   return root
 }
 
-const controlPath = env => join(rendererRoot(env), 'control.sock')
+const controlPath = rendererControlPath
 const control = (env, command) => localCall(controlPath(env), { id: 'mh-renderer-control', command }, 1500)
 const ownedStatus = result => {
   if (result?.owner !== 'mahiro-herdr.renderer' || !Number.isSafeInteger(result.pid)) throw new Error('foreign renderer control endpoint')
@@ -45,7 +62,7 @@ export const startRenderer = async (env = process.env) => {
   catch (error) { if (error.code !== 'ENOENT') throw error }
   const entry = fileURLToPath(new URL('../bin/mahiro-herdr-renderer.mjs', import.meta.url))
   if (!existing) {
-    const child = spawn(process.execPath, [entry, 'run'], { env, detached: true, stdio: 'ignore' })
+    const child = spawn(process.execPath, [entry, 'run'], { env, detached: true, stdio: 'ignore', windowsHide: true })
     child.on('error', () => {})
     child.unref()
   }
@@ -79,7 +96,7 @@ export const runRenderer = async (env = process.env) => {
   // Conservative sockaddr_un budget for supported runtimes, including macOS CI Node22.
   // Newer local OS/Node combinations can accept more; do not rely on that capability.
   const socketByteLimit = process.platform === 'darwin' ? 103 : 107
-  if (Buffer.byteLength(path) > socketByteLimit) throw new Error('renderer control socket path exceeds platform byte limit')
+  if (process.platform !== 'win32' && Buffer.byteLength(path) > socketByteLimit) throw new Error('renderer control socket path exceeds platform byte limit')
   const nonce = randomUUID()
   let stopping = false
   let ready = false
@@ -123,7 +140,7 @@ export const runRenderer = async (env = process.env) => {
     server.once('error', reject)
     server.listen(path, resolveListen)
   })
-  await chmod(path, 0o600)
+  if (!pipeEndpoint(path)) await chmod(path, 0o600)
   process.once('SIGTERM', () => { stopping = true })
   process.once('SIGINT', () => { stopping = true })
   const herdrPath = rendererSocketPath(env)
@@ -164,7 +181,7 @@ export const runRenderer = async (env = process.env) => {
   } finally {
     if (snapshot) await publishRendererFrame(herdrPath, rendererFrame(snapshot, states), published, { clear: true }).catch(() => {})
     await new Promise(resolveClose => server.close(resolveClose))
-    await rm(path, { force: true })
+    if (!pipeEndpoint(path)) await rm(path, { force: true })
     // Failed writes expire in ten seconds; never clear another metadata source.
   }
 }

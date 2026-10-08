@@ -11,6 +11,7 @@ import {
   MAX_U64,
   observeSequence,
   runHerdr,
+  sameFileMode,
   sanitizeToken
 } from './runtime-helpers.mjs'
 import {
@@ -96,8 +97,10 @@ function pluginConfigDir(env = process.env) {
   return resolvePath(env.HERDR_PLUGIN_CONFIG_DIR)
 }
 
-function herdrConfigPath(env = process.env) {
-  return resolvePath(env.HERDR_CONFIG_PATH || join(env.HOME || homedir(), '.config', 'herdr', 'config.toml'))
+export function herdrConfigPath(env = process.env) {
+  if (env.HERDR_CONFIG_PATH) return resolvePath(env.HERDR_CONFIG_PATH)
+  if (process.platform === 'win32') return resolvePath(join(env.APPDATA || join(homedir(), 'AppData', 'Roaming'), 'herdr', 'config.toml'))
+  return resolvePath(join(env.HOME || homedir(), '.config', 'herdr', 'config.toml'))
 }
 
 export function usageCacheDir(env = process.env) {
@@ -336,7 +339,7 @@ function parseSnapshot(bytes, expectedPath) {
 }
 
 function matchesState(current, exists, mode, bytes) {
-  return current.exists === exists && (!exists || current.mode === mode) && current.bytes.equals(bytes)
+  return current.exists === exists && sameFileMode(current.mode, mode, exists) && current.bytes.equals(bytes)
 }
 
 function upgradedAppliedBytes(saved) {
@@ -526,10 +529,21 @@ export async function restoreCapturedConfigState(captured, env = process.env) {
   })
 }
 
+const readOnlyFlags = () => {
+  let flags = constants.O_RDONLY
+  if (typeof constants.O_NONBLOCK === 'number') flags |= constants.O_NONBLOCK
+  if (typeof constants.O_NOFOLLOW === 'number') flags |= constants.O_NOFOLLOW
+  return flags
+}
+
 export async function readUsageCache(path, clock = Date.now, freshMs = FRESH_MS) {
   let handle
   try {
-    handle = await open(path, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW)
+    if (typeof constants.O_NOFOLLOW !== 'number') {
+      const linked = await lstat(path)
+      if (linked.isSymbolicLink() || !linked.isFile()) return null
+    }
+    handle = await open(path, readOnlyFlags())
     const details = await handle.stat()
     if (!details.isFile() || details.size > MAX_CACHE_BYTES) return null
     const buffer = Buffer.allocUnsafe(MAX_CACHE_BYTES + 1)
@@ -551,7 +565,7 @@ export async function readUsageCache(path, clock = Date.now, freshMs = FRESH_MS)
     })
     return { fetched: parsed.fetched, freshUntil, windows }
   } catch (error) {
-    if (['ENOENT', 'ELOOP', 'EMLINK', 'ENXIO', 'EAGAIN'].includes(error.code) || error instanceof SyntaxError) return null
+    if (['ENOENT', 'ELOOP', 'EMLINK', 'ENXIO', 'EAGAIN', 'EINVAL'].includes(error.code) || error instanceof SyntaxError) return null
     throw error
   } finally {
     await handle?.close()

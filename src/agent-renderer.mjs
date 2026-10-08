@@ -1,5 +1,6 @@
 import net from 'node:net'
-import { dirname, join } from 'node:path'
+import { homedir } from 'node:os'
+import { dirname, isAbsolute, join } from 'node:path'
 import { sanitizeToken } from './runtime-helpers.mjs'
 import { AGENT_SLOT_COUNT, RENDERER_TOKENS } from './space-renderer-style.mjs'
 import { FONT_GLYPHS } from './agent-icons.mjs'
@@ -12,11 +13,28 @@ export { FONT_GLYPHS } from './agent-icons.mjs'
 const idValid = value => typeof value === 'string' && /^[\w:-]{1,128}$/u.test(value)
 const identity = pane => JSON.stringify([pane.terminal_id, pane.agent, pane.agent_session?.value, pane.tokens?.letta_started_at])
 
-export const rendererSocketPath = env => env.HERDR_SOCKET_PATH || join(env.HERDR_CONFIG_PATH ? dirname(env.HERDR_CONFIG_PATH) : join(env.HOME, '.config', 'herdr'), 'herdr.sock')
+export const herdrApiEndpoint = value => {
+  if (process.platform !== 'win32') return value
+  if (typeof value !== 'string' || value.length === 0) throw new Error('Herdr socket path unavailable')
+  if (value.startsWith('\\\\.\\pipe\\') || value.startsWith('\\\\?\\pipe\\')) return value
+  if (!value.includes('\\') && !value.includes('/') && !value.includes(':') && !isAbsolute(value)) return `\\\\.\\pipe\\${value}`
+  // Herdr's Windows server listens with to_ns_name, so the whole path is the pipe name.
+  if (isAbsolute(value)) return `\\\\.\\pipe\\${value}`
+  throw new Error('Herdr socket path is not a pipe name or absolute path')
+}
+
+export const rendererSocketPath = env => {
+  if (env.HERDR_SOCKET_PATH) return herdrApiEndpoint(env.HERDR_SOCKET_PATH)
+  if (process.platform === 'win32') throw new Error('Herdr socket path unavailable')
+  return join(env.HERDR_CONFIG_PATH ? dirname(env.HERDR_CONFIG_PATH) : join(env.HOME || homedir(), '.config', 'herdr'), 'herdr.sock')
+}
 
 // Only local bounded Herdr/control transport. No arbitrary method dispatch from callers.
 export const localCall = (socketPath, request, timeout = 2000) => new Promise((resolve, reject) => {
-  const socket = net.createConnection({ path: socketPath })
+  let endpoint
+  try { endpoint = herdrApiEndpoint(socketPath) }
+  catch (error) { reject(error); return }
+  const socket = net.createConnection({ path: endpoint })
   let body = ''
   let settled = false
   const finish = (error, value) => {

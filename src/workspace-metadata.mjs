@@ -6,8 +6,10 @@ import {
   INVOCATION_DEADLINE_MS,
   MAX_OUTPUT_BYTES,
   MAX_U64,
+  commandInvocation,
   observeSequence,
   runHerdr,
+  samePath,
   sanitizeToken
 } from './runtime-helpers.mjs'
 
@@ -125,12 +127,14 @@ function runGit(gitBin, args, cwd, options) {
   }
 
   const timeout = Math.min(COMMAND_TIMEOUT_MS, remaining)
-  const result = spawnSync(gitBin, args, {
+  const command = commandInvocation(gitBin, args)
+  const result = spawnSync(command.file, command.args, {
     cwd,
     encoding: 'utf8',
     timeout,
     maxBuffer: MAX_OUTPUT_BYTES,
     killSignal: 'SIGKILL',
+    windowsHide: true,
     env: {
       ...options.env,
       LC_ALL: 'C',
@@ -170,7 +174,7 @@ export function inspectGitRepository(cwd, options = {}) {
   if (!isLinked && gitDir && gitCommonDir) {
     const resGit = resolvePath(cwd, gitDir)
     const resCommon = resolvePath(cwd, gitCommonDir)
-    if (resGit !== resCommon || gitDir.includes('/worktrees/') || gitDir.includes('\\worktrees\\')) {
+    if (!samePath(resGit, resCommon) || gitDir.includes('/worktrees/') || gitDir.includes('\\worktrees\\')) {
       isLinked = true
       worktreeLabel = sanitizeToken(basename(topLevel))
     }

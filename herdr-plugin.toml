@@ -3,16 +3,16 @@ name = "Mahiro Herdr"
 version = "0.7.1"
 min_herdr_version = "0.9.3"
 description = "Mahiro's Herdr integration: agent usage, Space agent status/icons, Git metadata and listening ports."
-platforms = ["macos", "linux"]
+platforms = ["macos", "linux", "windows"]
 
 [[startup]]
-command = ["sh", "-c", "exec node \"$HERDR_PLUGIN_ROOT/bin/mahiro-herdr.mjs\" startup"]
+command = ["node", "bin/mahiro-herdr.mjs", "startup"]
 
 [[actions]]
 id = "project-actions"
 title = "Project quick actions"
 contexts = ["workspace", "tab", "pane"]
-command = ["sh", "-c", "exec node \"$HERDR_PLUGIN_ROOT/bin/mahiro-herdr-actions.mjs\" --open-native"]
+command = ["node", "bin/mahiro-herdr-actions.mjs", "--open-native"]
 
 [[panes]]
 id = "project-actions-picker"
@@ -20,49 +20,50 @@ title = "Project quick actions"
 placement = "popup"
 width = "80%"
 height = 16
-command = ["sh", "-c", "exec node \"$HERDR_PLUGIN_ROOT/bin/mahiro-herdr-actions.mjs\""]
+command = ["node", "bin/mahiro-herdr-actions.mjs"]
 
 [[actions]]
 id = "refresh"
 title = "Refresh Mahiro sidebar metadata"
-command = ["sh", "-c", "exec node \"$HERDR_PLUGIN_ROOT/bin/mahiro-herdr.mjs\" refresh"]
+command = ["node", "bin/mahiro-herdr.mjs", "refresh"]
 
 [[actions]]
 id = "renderer-start"
 title = "Start Space agent renderer"
-command = ["sh", "-c", "exec node \"$HERDR_PLUGIN_ROOT/bin/mahiro-herdr-renderer.mjs\" start"]
+command = ["node", "bin/mahiro-herdr-renderer.mjs", "start"]
 
 [[actions]]
 id = "renderer-stop"
 title = "Stop Space agent renderer (marks expire)"
-command = ["sh", "-c", "exec node \"$HERDR_PLUGIN_ROOT/bin/mahiro-herdr-renderer.mjs\" stop"]
+command = ["node", "bin/mahiro-herdr-renderer.mjs", "stop"]
 
 [[actions]]
 id = "renderer-font"
 title = "Install agent icon font and Ghostty mapping"
+platforms = ["macos"]
 command = ["sh", "-c", "exec node \"$HERDR_PLUGIN_ROOT/bin/mahiro-herdr-renderer.mjs\" font-install"]
 
 [[actions]]
 id = "configure"
 title = "Configure Mahiro sidebar rows"
-command = ["sh", "-c", "exec node \"$HERDR_PLUGIN_ROOT/bin/mahiro-herdr.mjs\" configure-live"]
+command = ["node", "bin/mahiro-herdr.mjs", "configure-live"]
 
 [[actions]]
 id = "uninstall"
 title = "Restore Mahiro sidebar configuration"
-command = ["sh", "-c", "exec node \"$HERDR_PLUGIN_ROOT/bin/mahiro-herdr.mjs\" restore-live"]
+command = ["node", "bin/mahiro-herdr.mjs", "restore-live"]
 
 [[events]]
 id = "mahiro-herdr-agent-detected"
 on = "pane.agent_detected"
-command = ["sh", "-c", "exec node \"$HERDR_PLUGIN_ROOT/bin/mahiro-herdr.mjs\" event"]
+command = ["node", "bin/mahiro-herdr.mjs", "event"]
 
 [[events]]
 id = "mahiro-herdr-agent-status"
 on = "pane.agent_status_changed"
-command = ["sh", "-c", "exec node \"$HERDR_PLUGIN_ROOT/bin/mahiro-herdr.mjs\" event"]
+command = ["node", "bin/mahiro-herdr.mjs", "event"]
 
 [[events]]
 id = "mahiro-herdr-pane-focused"
 on = "pane.focused"
-command = ["sh", "-c", "exec node \"$HERDR_PLUGIN_ROOT/bin/mahiro-herdr.mjs\" event"]
+command = ["node", "bin/mahiro-herdr.mjs", "event"]
