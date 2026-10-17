@@ -20,7 +20,7 @@ Current evidence checked on 2026-10-05: installed Herdr 0.9.3, bundled public AP
 | Native project commands                                | Herdr server `[[keys.command]]`; project script owner                 | Declared project-actions action opens a native terminal picker; selected commands open new tabs in the same workspace. Mahiro approved a local prefix+a binding; native interaction acceptance remains pending.         |
 | Agent launch                                           | Herdr agent/pane runtime                                              | Keep executable/argv and draft-fill commands distinct. Agent launcher integration is planned, not implemented by the metadata adapter.                                                                                  |
 | Editable custom actions and key presets                | Herdr Web                                                             | Existing repo catalog is read-only draft-fill evidence. Personal action storage, validated keys, UI lifecycle and target/auth/lease checks belong to Web, not the quota adapter.                                        |
-| Letta lifecycle/model/context                          | Mahiro Mods                                                           | Preserve native lifecycle authority and existing `mahiro_sidebar_*` producer ownership.                                                                                                                                 |
+| Agent lifecycle/model/context/provider                 | Agent integrations: Mahiro Mods for Letta, mahiro-pi for Pi             | Preserve native lifecycle authority and existing `mahiro_sidebar_*` producer ownership.                                                                                                                                 |
 | Codex/Agy/Cursor normalized usage                      | Existing producer contracts; this project's read-only projection      | Keep provider collection outside adapter ownership. No new provider APIs or credentials.                                                                                                                                |
 | Main executor/browser routing                          | Canonical `mahiro-skills` direct-cli and browser owners               | Herdr-first preference must retain verified Orca compatibility and system-browser QA ownership.                                                                                                                         |
 
@@ -256,12 +256,18 @@ process.stdout.write(renderMyStatusLine(payload))
 
 ## Pane-token producer contract
 
-Codex quota is eligible only for an inventory entry where:
+Shared Codex account quota is eligible only for either exact inventory pair:
 
-- `agent` is exactly `letta`, and
-- `tokens.mahiro_sidebar_provider` is exactly `openai-codex`.
+- `agent=letta` and `tokens.mahiro_sidebar_provider=openai-codex`, or
+- `agent=pi` and `tokens.mahiro_sidebar_provider=openai`.
 
-An external integration such as Mahiro Mods must publish and own that pane token. This adapter reads it only from Herdr's agent inventory and never sets or clears it. It likewise never sets or clears `mahiro_sidebar_model` or `mahiro_sidebar_context`.
+Both use the same normalized `codex.json` and `codexMetadata` projection: existing `Codex 5h` / `Codex 7d` labels, row order, severity colors, five-minute freshness, reset margins, TTL and fail-closed clears remain identical. A Pi-only inventory reads that cache without requiring a Letta pane. Exact pane events refresh only their eligible target; losing eligibility clears adapter-owned quota tokens. Pi `openai-codex` is excluded because its integration owns a separate account-bound quota path. Unknown agent kinds, other providers and GPT model names never establish eligibility.
+
+Agent integrations publish and own model/context/provider tokens: Mahiro Mods for Letta and mahiro-pi for Pi. This adapter reads the provider only from Herdr's agent inventory and never sets or clears it, `mahiro_sidebar_model` or `mahiro_sidebar_context`.
+
+For native Pi `openai`, the display producer must leave all six shared quota token sets and clears to this adapter, including heartbeats and model changes. Different metadata source IDs do not isolate these token clears; an old Pi publisher that clears empty quota every heartbeat must be updated and reloaded.
+
+The approved Pi `openai` sidebar exception displays shared Codex account usage, not Pi-native numeric quota, active-session attribution or proof that Pi authentication matches the cache account. It does not change provider/auth/billing configuration, inspect credentials, collect usage, add cache watchers or query providers. Pi's footer continues to omit quota.
 
 Agy quota is eligible only for an inventory entry whose `agent` is exactly `agy` and which is not launch-pending. Agy values are account-level shared pools, not active-session attribution.
 

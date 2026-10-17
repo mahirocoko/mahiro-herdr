@@ -697,10 +697,15 @@ function liveQuotaAgent(agent, kind) {
   return agent.agent === kind && agent.launch_pending !== true && !['launching', 'pending', 'launch-pending'].includes(status) && agent.tokens?.launch_pending !== 'true'
 }
 
+function usesSharedCodexQuota(agent) {
+  const provider = agent.tokens?.mahiro_sidebar_provider
+  return (agent.agent === 'letta' && provider === 'openai-codex') || (agent.agent === 'pi' && provider === 'openai')
+}
+
 function desiredFor(agent, caches, now) {
   if (liveQuotaAgent(agent, 'agy')) return agyMetadata(caches.agy, now)
   if (liveQuotaAgent(agent, 'cursor')) return cursorMetadata(caches.cursor, now)
-  if (agent.agent === 'letta' && agent.tokens?.mahiro_sidebar_provider === 'openai-codex') return codexMetadata(caches.codex, now)
+  if (usesSharedCodexQuota(agent)) return codexMetadata(caches.codex, now)
   return { tokens: {}, expiresAt: 0 }
 }
 
@@ -748,7 +753,7 @@ async function reconcile(env, options = {}) {
   const cacheReader = options._readUsageCacheForTest || readUsageCache
   const needsAgy = !options.clearOnly && targets.some(agent => liveQuotaAgent(agent, 'agy'))
   const needsCursor = !options.clearOnly && targets.some(agent => liveQuotaAgent(agent, 'cursor'))
-  const needsCodex = !options.clearOnly && targets.some(agent => agent.agent === 'letta' && agent.tokens?.mahiro_sidebar_provider === 'openai-codex')
+  const needsCodex = !options.clearOnly && targets.some(usesSharedCodexQuota)
   const caches = {
     agy: needsAgy ? await cacheReader(join(cacheRoot, 'agy.json'), clock) : null,
     cursor: needsCursor ? await cacheReader(join(cacheRoot, 'cursor.json'), clock, CURSOR_FRESH_MS) : null,

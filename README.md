@@ -27,7 +27,7 @@ The source and isolated test suite support macOS and Linux. Listening TCP ports 
 For a released public version:
 
 ```sh
-herdr plugin install mahirocoko/mahiro-herdr --ref v0.7.1
+herdr plugin install mahirocoko/mahiro-herdr --ref v0.7.2
 herdr plugin action invoke configure --plugin mahiro-herdr
 ```
 
@@ -162,7 +162,7 @@ By default, the adapter reads:
 
 The default preserves compatibility with [Mahiro Mods v0.10.0+](https://github.com/mahirocoko/mods/releases/tag/v0.10.0), the reference producer for model/context/provider metadata and the normalized Codex cache. Agy quota now comes from the optional Agy statusline producer below or another external producer. To use another cache root, set `MAHIRO_HERDR_USAGE_CACHE_DIR` to a non-empty absolute directory path in the environments that launch both the producer and Herdr server; plugin actions and events inherit it. Relative or empty overrides fail closed.
 
-External producers own their collection and normalization. The optional Agy helper owns only normalization and publication of the already-delivered statusline `quota` map. Agent Halo is the canonical trusted Cursor collector and publishes only normalized `Auto` and `API` windows to `cursor.json`; this adapter does not duplicate its credential or provider-network logic. The adapter only reads bounded normalized JSON and never reads credentials or raw provider payloads. Codex publication additionally requires the pane inventory token `mahiro_sidebar_provider=openai-codex`; that token must be produced and owned externally. Agy values are labeled `Agy shared pools` because they are account-level shared pools, not active-session attribution. Cursor values are labeled `Cursor auto` and `Cursor api` on live `cursor` panes.
+External producers own their collection and normalization. The optional Agy helper owns only normalization and publication of the already-delivered statusline `quota` map. Agent Halo is the canonical trusted Cursor collector and publishes only normalized `Auto` and `API` windows to `cursor.json`; this adapter does not duplicate its credential or provider-network logic. The adapter only reads bounded normalized JSON and never reads credentials or raw provider payloads. Codex sidebar projection requires an exact inventory pair: `agent=letta` with `mahiro_sidebar_provider=openai-codex`, or `agent=pi` with `mahiro_sidebar_provider=openai`. Agent integrations publish and own model/context/provider tokens (Mahiro Mods for Letta, mahiro-pi for Pi); the adapter never changes them. Both eligible pairs display the same shared Codex account cache with existing `Codex 5h` / `Codex 7d` labels, colors, order and expiry. This is not Pi-native quota, session attribution or proof of matching authentication; Pi's footer still omits quota. Pi `openai-codex`, other providers and model-name inference are excluded. Agy values are labeled `Agy shared pools` because they are account-level shared pools, not active-session attribution. Cursor values are labeled `Cursor auto` and `Cursor api` on live `cursor` panes.
 
 Codex and Agy snapshots remain usable for five minutes. Cursor snapshots remain usable for 65 minutes, covering Agent Halo's configurable maximum 60-minute usage refresh cadence plus delivery headroom while its desktop renderer is running, without adding another poller. If Agent Halo is not running or refresh fails, the cache expires and Cursor rows clear.
 

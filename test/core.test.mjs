@@ -221,6 +221,105 @@ test('provider loss receives a complete all-clear patch', async () => {
   assert.equal(report.includes('--token'), false)
 })
 
+test('Letta and Pi share exact Codex labels, severity, order and five-minute TTL', async () => {
+  const setup = await fixture()
+  const now = Date.now()
+  const stub = await stubHerdr(setup, [agent('w1:p1', 'letta', { mahiro_sidebar_provider: 'openai-codex' }), agent('w1:p2', 'pi', { mahiro_sidebar_provider: 'openai' })])
+  await writeCache(
+    join(setup.cache, 'codex.json'),
+    [
+      { label: 'S:7d', remaining: 90, reset: now + 900_000 },
+      { label: 'P:7d', remaining: 40, reset: now + 900_000 },
+      { label: 'P:5h', remaining: 0, reset: now + 900_000 }
+    ],
+    now
+  )
+  await refreshPaneMetadata(stub.env, { clock: () => now, sequence: () => '32' })
+  const reports = reportCalls(await calls(stub.log))
+  assert.equal(reports.length, 2)
+  assert.deepEqual(reports[0].slice(3), reports[1].slice(3))
+  assert.ok(reports[1].includes('mahiro_sidebar_q1_critical=Codex 5h 0%'))
+  assert.ok(reports[1].includes('mahiro_sidebar_q2_warn=Codex 7d 40%'))
+  assert.equal(reports[1][reports[1].indexOf('--ttl-ms') + 1], '294000')
+})
+
+test('Pi-only inventory reads only Codex cache and exact pane events refresh Pi', async () => {
+  const setup = await fixture()
+  const now = Date.now()
+  const stub = await stubHerdr(setup, [agent('w1:p1', 'pi', { mahiro_sidebar_provider: 'openai' }), agent('w1:p2', 'other')])
+  await writeCache(join(setup.cache, 'codex.json'), [{ label: 'P:5h', remaining: 80, reset: now + 60_000 }], now)
+  const reads = []
+  const options = {
+    clock: () => now,
+    sequence: () => '33',
+    _readUsageCacheForTest: async (path, clock) => {
+      reads.push(path)
+      return readUsageCache(path, clock)
+    }
+  }
+  await refreshPaneMetadata(stub.env, options)
+  assert.deepEqual(reads, [join(setup.cache, 'codex.json')])
+  for (const event of ['pane_focused', 'pane_agent_detected', 'pane_agent_status_changed']) {
+    reads.length = 0
+    await writeFile(stub.log, '')
+    await eventRefresh(stub.env, { ...options, rawEvent: validEvent(event) })
+    assert.deepEqual(reads, [join(setup.cache, 'codex.json')])
+    const reports = reportCalls(await calls(stub.log))
+    assert.deepEqual(
+      reports.map(report => report[2]),
+      ['w1:p1']
+    )
+    assert.ok(reports[0].includes('mahiro_sidebar_q1_ok=Codex 5h 80%'))
+  }
+})
+
+test('Pi provider loss clears quota only and exact eligibility excludes legacy and inferred providers', async () => {
+  const setup = await fixture()
+  const now = Date.now()
+  const preserved = { mahiro_sidebar_model: 'gpt-5', mahiro_sidebar_context: '10%' }
+  const stub = await stubHerdr(setup, [agent('w1:p1', 'pi', { ...preserved, mahiro_sidebar_provider: 'openai' })])
+  await writeCache(join(setup.cache, 'codex.json'), [{ label: 'P:5h', remaining: 70, reset: now + 60_000 }], now)
+  await refreshPaneMetadata(stub.env, { clock: () => now, sequence: () => '34' })
+  const excluded = [
+    agent('w1:p1', 'pi', { ...preserved, mahiro_sidebar_provider: 'anthropic' }),
+    agent('w1:p2', 'pi', { mahiro_sidebar_provider: 'openai-codex' }),
+    agent('w1:p3', 'pi', preserved),
+    agent('w1:p4', 'unknown', { mahiro_sidebar_provider: 'openai' }),
+    agent('w1:p5', 'gpt-5', { mahiro_sidebar_provider: 'openai-codex' }),
+    agent('w1:p6', 'letta', { mahiro_sidebar_provider: 'openai' }),
+    agent('w1:p7', 'pi', { mahiro_sidebar_provider: 'OpenAI' })
+  ]
+  await writeFile(stub.inventory, JSON.stringify({ result: { agents: excluded } }))
+  await writeFile(stub.log, '')
+  await refreshPaneMetadata(stub.env, {
+    clock: () => now,
+    sequence: () => '35',
+    _readUsageCacheForTest: async () => assert.fail('ineligible panes must not read caches')
+  })
+  for (const report of reportCalls(await calls(stub.log))) {
+    assert.equal(report.includes('--token'), false)
+    assert.equal(report.filter(value => value === '--clear-token').length, OWNED_TOKENS.length)
+    for (const name of ['mahiro_sidebar_model', 'mahiro_sidebar_context', 'mahiro_sidebar_provider']) assert.equal(report.includes(name), false)
+  }
+})
+
+test('Pi missing, stale, failed and reset-expired Codex caches clear instead of fabricating quota', async () => {
+  const setup = await fixture()
+  const now = Date.now()
+  const stub = await stubHerdr(setup, [agent('w1:p1', 'pi', { mahiro_sidebar_provider: 'openai' })])
+  const path = join(setup.cache, 'codex.json')
+  const windows = [{ label: 'P:5h', remaining: 80, reset: now + 60_000 }]
+  for (const value of [null, { fetched: now - 300_000 }, { fetched: now, failed: true }, { fetched: now, windows: [{ ...windows[0], reset: now + 6000 }] }]) {
+    if (value) await writeCache(path, windows, now, value)
+    await writeFile(stub.log, '')
+    await refreshPaneMetadata(stub.env, { clock: () => now, sequence: () => '36' })
+    const report = reportCalls(await calls(stub.log))[0]
+    assert.equal(report.includes('--token'), false)
+    assert.equal(report.filter(value => value === '--clear-token').length, OWNED_TOKENS.length)
+    assert.equal(report.includes('--ttl-ms'), false)
+  }
+})
+
 test('same token text with a shorter reset republishes a shorter TTL', async () => {
   const setup = await fixture()
   const now = Date.now()
@@ -784,8 +883,8 @@ test('manifest uses stateless event entrypoint and shell scripts contain no Herd
   const packageJson = JSON.parse(await readFile(new URL('package.json', root), 'utf8'))
   const license = await readFile(new URL('LICENSE', root), 'utf8')
   assert.match(manifest, /startup"\]/u)
-  assert.match(manifest, /version = "0\.7\.1"/u)
-  assert.equal(packageJson.version, '0.7.1')
+  assert.match(manifest, /version = "0\.7\.2"/u)
+  assert.equal(packageJson.version, '0.7.2')
   assert.equal(packageJson.license, 'MIT')
   assert.equal(packageJson.private, true)
   assert.match(license, /^MIT License/u)
