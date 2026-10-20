@@ -6,12 +6,137 @@ import { join } from 'node:path'
 import net from 'node:net'
 import { configure } from '../src/core.mjs'
 import { SPACE_RENDERER_ROWS, VENDOR_COLORS } from '../src/space-renderer-style.mjs'
-import { FONT_GLYPHS, RENDERER_TOKENS, localCall, rendererFrame, publishRendererFrame } from '../src/agent-renderer.mjs'
+import { FONT_GLYPHS, RENDERER_TOKENS, SPINNER_FRAMES, localCall, rendererFrame, publishRendererFrame } from '../src/agent-renderer.mjs'
 import { installRendererFont, restoreRendererFont, setupRendererFont } from '../src/renderer-font.mjs'
 import { rendererStatus, runRenderer, startRenderer, stopRenderer } from '../src/renderer-runtime.mjs'
 
 const pane = (id, status = 'idle', extra = {}) => ({ pane_id: id, workspace_id: 'w1', terminal_id: `term-${id}`, agent: 'letta', display_agent: 'Letta', terminal_title_stripped: 'Mahiro Code', agent_status: status, ...extra })
 const snapshot = agents => ({ agents, workspaces: [{ workspace_id: 'w1', label: 'Project' }, { workspace_id: 'w2', label: 'Feature', worktree: { is_linked_worktree: true } }] })
+
+const workerTokens = (extra = {}) => ({
+  mahiro_pi_workers_schema: '1',
+  mahiro_pi_workers_running: '1',
+  mahiro_pi_workers_queued: '0',
+  mahiro_pi_workers_owner: '12345678-1234-4234-8234-123456789abc',
+  ...extra
+})
+const piPane = (status = 'idle', extra = {}) => pane('pi1', status, { agent: 'pi', display_agent: 'pi', ...extra })
+const statusCell = frame => frame.frames[0].tokens.mh_ws_a0_status
+
+test('Pi workers: complete current flat tuple overlays idle/done with existing spinner only', () => {
+  for (const status of ['idle', 'done']) {
+    for (const [running, queued] of [['1', '0'], ['0', '1'], ['256', '0'], ['0', '256'], ['128', '128']]) {
+      for (const step of [0, 1, 7]) {
+        const input = snapshot([piPane(status, { tokens: workerTokens({ mahiro_pi_workers_running: running, mahiro_pi_workers_queued: queued }) })])
+        const baseline = rendererFrame(snapshot([piPane(status)]), {}, { step, font: true })
+        const actual = rendererFrame(input, {}, { step, font: true })
+        assert.equal(statusCell(actual), SPINNER_FRAMES[step])
+        assert.deepEqual(actual.states, baseline.states)
+        baseline.frames[0].tokens.mh_ws_a0_status = SPINNER_FRAMES[step]
+        assert.deepEqual(actual, baseline)
+      }
+    }
+  }
+  for (const agent of ['letta', 'codex', 'Pi', 'PI', '', undefined]) {
+    const input = snapshot([piPane('idle', { agent, display_agent: 'pi', tokens: workerTokens() })])
+    assert.equal(statusCell(rendererFrame(input)), '○')
+  }
+})
+
+test('Pi workers: malformed/missing/cleared tuples fail closed without coercion or old-token fallback', () => {
+  const invalid = [undefined, null, {}, { mahiro_pi_workers: 'running' }, workerTokens({ mahiro_pi_workers_running: '0' })]
+  for (const key of Object.keys(workerTokens())) {
+    const missing = workerTokens()
+    delete missing[key]
+    invalid.push(missing)
+    for (const value of [null, undefined, 1, 0, true, {}, []]) invalid.push(workerTokens({ [key]: value }))
+  }
+  for (const value of ['', '0', '2', '01', ' 1', '1 ']) invalid.push(workerTokens({ mahiro_pi_workers_schema: value }))
+  for (const key of ['mahiro_pi_workers_running', 'mahiro_pi_workers_queued']) {
+    for (const value of ['', '01', ' 1', '1 ', '+1', '-1', '1.0', '0.5', 'NaN', 'Infinity', '1e2', '257', '99999999999999999999999999', '1\n', NaN, Infinity, 0.5, -1, 257]) invalid.push(workerTokens({ [key]: value }))
+  }
+  for (const value of ['', 'job-1', '12345678123442348234123456789abc', '12345678-1234-4234-8234-123456789ab', '12345678-1234-4234-8234-123456789abcd', '12345678-1234-4234-8234-123456789abg', '12345678-1234-4234-8234-123456789ABC', '12345678-1234-4234-8234-123456789abc\n']) invalid.push(workerTokens({ mahiro_pi_workers_owner: value }))
+  invalid.push(workerTokens({ mahiro_pi_workers_running: '256', mahiro_pi_workers_queued: '1' }))
+  for (const tokens of invalid) {
+    for (const status of ['idle', 'done', 'working', 'blocked', 'unknown', 'invalid']) {
+      const baseline = rendererFrame(snapshot([piPane(status)]))
+      assert.deepEqual(rendererFrame(snapshot([piPane(status, { tokens })])), baseline)
+    }
+  }
+})
+
+test('Pi workers: metadata ending/TTL key removal never synthesizes completion; authentic Done restores', () => {
+  for (const ending of [undefined, {}, Object.fromEntries(Object.keys(workerTokens()).map(key => [key, null])), workerTokens({ mahiro_pi_workers_running: '0' })]) {
+    let frame = rendererFrame(snapshot([piPane()]))
+    for (const tokens of [workerTokens(), workerTokens({ mahiro_pi_workers_owner: 'abcdef01-2345-4678-9abc-0123456789ab' }), ending]) {
+      frame = rendererFrame(snapshot([piPane('idle', { tokens })]), frame.states)
+      assert.equal(frame.states.pi1.status, 'idle')
+      assert.equal(frame.states.pi1.heldDone, false)
+    }
+    assert.equal(statusCell(frame), '○')
+  }
+  for (const raw of ['idle', 'done']) {
+    const held = rendererFrame(snapshot([piPane('done')]))
+    const overlay = rendererFrame(snapshot([piPane(raw, { tokens: workerTokens() })]), held.states)
+    assert.equal(statusCell(overlay), SPINNER_FRAMES[0])
+    assert.equal(overlay.states.pi1.heldDone, true)
+    const restored = rendererFrame(snapshot([piPane(raw)]), overlay.states)
+    assert.equal(statusCell(restored), '✓')
+    const focused = rendererFrame(snapshot([piPane(raw, { focused: true, tokens: workerTokens() })]), overlay.states)
+    assert.equal(focused.states.pi1.heldDone, false)
+    assert.equal(statusCell(rendererFrame(snapshot([piPane(raw)]), focused.states)), '○')
+  }
+})
+
+test('Pi workers: metamorphic raw state/identity/focus/receipt invariance and immutable inputs', () => {
+  let combinations = 0
+  for (const raw of ['idle', 'done', 'working', 'blocked', 'unknown', 'invalid', undefined]) {
+    for (const prior of ['idle', 'done', 'working', 'blocked', 'unknown']) {
+      for (const heldDone of [false, true]) {
+        for (const focus of ['none', 'pane', 'snapshot']) {
+          for (const completion_seq of [undefined, 0, 1, 2]) {
+            const seed = rendererFrame(snapshot([piPane(prior, { completion_seq: 1 })])).states
+            seed.pi1.heldDone = heldDone
+            for (const owner of ['12345678-1234-4234-8234-123456789abc', 'abcdef01-2345-4678-9abc-0123456789ab']) {
+              const baseInput = snapshot([piPane(raw, { agent_status: raw, focused: focus === 'pane', completion_seq })])
+              if (focus === 'snapshot') baseInput.focused_pane_id = 'pi1'
+              const input = structuredClone(baseInput)
+              input.agents[0].tokens = workerTokens({ mahiro_pi_workers_owner: owner })
+              const preservedInput = structuredClone(input)
+              const preservedSeed = structuredClone(seed)
+              const baseline = rendererFrame(baseInput, seed, { step: 3 })
+              const actual = rendererFrame(input, seed, { step: 3 })
+              assert.deepEqual(actual.states, baseline.states)
+              if (raw === 'idle' || raw === 'done') baseline.frames[0].tokens.mh_ws_a0_status = SPINNER_FRAMES[3]
+              assert.deepEqual(actual, baseline)
+              assert.deepEqual(input, preservedInput)
+              assert.deepEqual(seed, preservedSeed)
+              combinations += 1
+            }
+          }
+        }
+      }
+    }
+  }
+  assert.equal(combinations, 1680)
+})
+
+test('Pi workers: sibling Spaces, native order, vendor cells and overflow retain all 16 cells', () => {
+  const agents = Array.from({ length: 10 }, (_, index) => pane(`p${index}`, 'idle', { agent: index % 2 ? 'codex' : 'pi', display_agent: index % 2 ? 'codex' : 'pi' }))
+  agents.push(piPane('blocked', { workspace_id: 'w2' }), pane('other', 'idle', { workspace_id: 'w2' }))
+  const base = rendererFrame(snapshot(agents), {}, { font: true, step: 2 })
+  const active = structuredClone(agents)
+  for (const item of active) item.tokens = workerTokens()
+  const actual = rendererFrame(snapshot(active), {}, { font: true, step: 2 })
+  assert.deepEqual(actual.states, base.states)
+  for (const index of [0, 2, 4, 6]) base.frames[0].tokens[`mh_ws_a${index}_status`] = SPINNER_FRAMES[2]
+  assert.deepEqual(actual, base)
+  assert.equal(actual.frames[0].tokens.mh_ws_a7_name, '+3 agents')
+  assert.equal(actual.frames[0].tokens.mh_ws_a7_status, null)
+  assert.equal(actual.frames[1].tokens.mh_ws_a0_status, '?')
+  assert.equal(actual.frames[1].tokens.mh_ws_a1_status, '○')
+  for (const frame of actual.frames) assert.deepEqual(Object.keys(frame.tokens), RENDERER_TOKENS)
+})
 
 test('Space agent anatomy: one pane per row with independently colored status and vendor cells', () => {
   const rows = SPACE_RENDERER_ROWS.split('\n')
