@@ -20,14 +20,14 @@ The package remains `private: true` to prevent accidental npm publication. Distr
 - An external cache producer that implements the open adapter protocol, the optional native Agy statusline producer module, or the workspace metadata bridge
 - For Codex rows, an external pane-token producer that identifies eligible panes
 
-The source and isolated test suite support macOS and Linux. Listening TCP ports inspection is macOS-only; Linux clears that row while retaining Git/quota behavior. Mahiro has verified installation, configuration, events, refresh, and metadata behavior with Herdr 0.9.0 on macOS. GitHub Actions runs isolated Node 22 tests on `macos-latest` and `ubuntu-latest`; that Linux check does not claim live Herdr runtime integration.
+The source and isolated test suite support macOS and Linux. Listening TCP ports inspection is macOS-only; Linux clears that row while retaining Git/quota behavior. Mahiro has verified installation, configuration, events, refresh, and metadata behavior with Herdr 0.9.0 on macOS. GitHub Actions runs isolated Node 22 tests on `macos-latest` and `ubuntu-latest` only when a GitHub release is published, not on pushes or pull requests; that Linux check does not claim live Herdr runtime integration.
 
 ## Install
 
 For a released public version:
 
 ```sh
-herdr plugin install mahirocoko/mahiro-herdr --ref v0.7.2
+herdr plugin install mahirocoko/mahiro-herdr --ref v0.7.3
 herdr plugin action invoke configure --plugin mahiro-herdr
 ```
 
