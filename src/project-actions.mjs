@@ -138,12 +138,20 @@ export const commandText = (argv) =>
   argv.map((arg) => `'${arg.replaceAll("'", "'\\''")}'`).join(' ')
 
 const quoteCmd = (arg) => {
-  if (arg.includes('%') || arg.includes('"'))
+  if (arg.includes('%') || arg.includes('"') || arg.includes('!'))
     throw new Error('argument cannot be quoted safely for cmd.exe; no command sent')
-  return arg.length === 0 ? '""' : `"${arg}"`
+  return `"${arg.replace(/\\+$/u, (slashes) => slashes + slashes)}"`
 }
 
-const quotePowerShell = (arg) => `'${arg.replaceAll("'", "''")}'`
+const quotePowerShell = (arg) => {
+  if (
+    arg.includes('"') ||
+    arg.length === 0 ||
+    (/\s/u.test(arg) && arg.endsWith('\\'))
+  )
+    throw new Error('argument cannot be passed safely through PowerShell; no command sent')
+  return `'${arg.replaceAll("'", "''")}'`
+}
 
 const paneShellKind = (name) => {
   const parts = (typeof name === 'string' ? name : '').split(/[\\/]/u)

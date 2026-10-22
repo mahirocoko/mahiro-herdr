@@ -144,7 +144,9 @@ The picker keeps that project as its working directory and loads
 `bin/mahiro-herdr-actions.mjs` from `HERDR_PLUGIN_ROOT`. Text sent to the new
 tab follows that pane's shell process name: PowerShell, cmd, or a POSIX
 sh-family shell (`sh`, `bash`, `zsh`, `dash`, `ksh`). Any other shell fails
-closed and no command is sent.
+closed and no command is sent. cmd rejects `%`, `"`, and `!`, and doubles a
+trailing run of backslashes before the closing quote. PowerShell rejects `"`,
+empty arguments, and arguments that contain whitespace and end with `\`.
 
 Mahiro's local binding is **Ctrl+B, then A** (`prefix+a`). It was explicitly
 approved and applied with config/snapshot backups and validated reload. It is

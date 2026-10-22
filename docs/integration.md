@@ -67,7 +67,13 @@ and a plain terminal picker. It uses `tab create`, validates the returned new
 pane and its shell process, submits once with `pane run`, then focuses the tab.
 Command syntax follows that pane's shell process name: PowerShell (`powershell`
 or `pwsh`), `cmd`, or a POSIX sh-family shell (`sh`, `bash`, `zsh`, `dash`,
-`ksh`). Any other shell fails closed and no command is sent. The manifest
+`ksh`). Any other shell fails closed and no command is sent. cmd arguments
+reject `%`, `"`, and `!`; other arguments are double-quoted, and a trailing run
+of backslashes is doubled so the closing quote stays a delimiter. PowerShell
+arguments stay single-quoted. They reject `"`, empty strings, and values that
+contain whitespace and end with `\`, because Windows PowerShell 5.1 and pwsh do
+not share one safe native-argument encoding for those values. A quoting failure
+sends no command. The manifest
 declares `project-actions` and the `project-actions-picker` popup entrypoint.
 The picker keeps the project cwd and bootstraps its script from
 `HERDR_PLUGIN_ROOT`. This is a native plugin action/terminal surface, not a new

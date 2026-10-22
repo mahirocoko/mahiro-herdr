@@ -254,15 +254,127 @@ test('command text matches the pane shell and cmd rejects unsafe quotes', () => 
   )
   assert.equal(paneCommandText(['echo', ''], 'cmd'), '"echo" ""')
   assert.equal(
+    paneCommandText(['echo', 'C:\\work dir\\', 'next'], 'cmd'),
+    '"echo" "C:\\work dir\\\\" "next"'
+  )
+  assert.equal(
+    paneCommandText(['echo', 'C:\\a\\\\'], 'cmd'),
+    '"echo" "C:\\a\\\\\\\\"'
+  )
+  assert.equal(
     paneCommandText(['printf', '%s', "a'b; $(echo NOT_EXECUTED)"], 'posix'),
     `'printf' '%s' 'a'\\''b; $(echo NOT_EXECUTED)'`
   )
   assert.equal(paneCommandText(['npm', "a'b"], 'powershell'), "& 'npm' 'a''b'")
+  assert.equal(
+    paneCommandText(['npm', 'C:\\nodir\\'], 'powershell'),
+    "& 'npm' 'C:\\nodir\\'"
+  )
   assert.throws(() => paneCommandText(['npm']), /unsupported pane shell/)
-  for (const arg of ['%PATH%', 'say "hi"', '100%']) {
+  for (const arg of ['%PATH%', 'say "hi"', '100%', '!PATH!', 'a!b']) {
     assert.throws(
       () => paneCommandText(['echo', arg], 'cmd'),
       /argument cannot be quoted safely for cmd.exe; no command sent/
+    )
+  }
+  for (const arg of ['a"b', '', 'C:\\work dir\\']) {
+    assert.throws(
+      () => paneCommandText(['npm', arg], 'powershell'),
+      /argument cannot be passed safely through PowerShell; no command sent/
+    )
+  }
+})
+
+const deliveredArgv = async (spawn) => {
+  const root = await mkdtemp(join(tmpdir(), 'herdr-argv-'))
+  try {
+    const script = join(root, 'argv.js')
+    await writeFile(script, 'process.stdout.write(JSON.stringify(process.argv.slice(2)))')
+    const result = spawn(script)
+    const stderr = Buffer.isBuffer(result.stderr) ? result.stderr.toString('utf8') : ''
+    const stdout = Buffer.isBuffer(result.stdout)
+      ? result.stdout.includes(0)
+        ? result.stdout.toString('utf16le')
+        : result.stdout.toString('utf8')
+      : ''
+    assert.equal(result.status, 0, `status ${result.status}\n${stdout}\n${stderr}`)
+    return JSON.parse(stdout.replace(/^\uFEFF/u, '').trim())
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+}
+
+test('cmd.exe delivers quoted argv unchanged to node', { skip: process.platform !== 'win32' }, async () => {
+  const args = [
+    'C:\\work dir\\',
+    'C:\\a\\\\',
+    'next',
+    '',
+    'c d & e',
+    'x|y',
+    'a^b',
+    '<in>',
+    "a'b",
+    '(paren)',
+    'ไทย'
+  ]
+  const delivered = await deliveredArgv((script) => {
+    const command = paneCommandText([process.execPath, script, ...args], 'cmd')
+    return spawnSync('cmd.exe', ['/d', '/s', '/c', `"${command}"`], {
+      windowsVerbatimArguments: true,
+      encoding: 'buffer'
+    })
+  })
+  assert.deepEqual(delivered, args)
+})
+
+test('cmd.exe delayed expansion keeps literals and rejects !', { skip: process.platform !== 'win32' }, async () => {
+  const args = ['a^b', 'c d & e', 'x|y', '<in>', '(paren)', 'ไทย']
+  const delivered = await deliveredArgv((script) => {
+    const command = paneCommandText([process.execPath, script, ...args], 'cmd')
+    return spawnSync('cmd.exe', ['/d', '/v:on', '/s', '/c', `"${command}"`], {
+      windowsVerbatimArguments: true,
+      encoding: 'buffer'
+    })
+  })
+  assert.deepEqual(delivered, args)
+  assert.throws(
+    () => paneCommandText([process.execPath, 'argv.js', '!PATH!'], 'cmd'),
+    /argument cannot be quoted safely for cmd.exe; no command sent/
+  )
+})
+
+test('powershell.exe delivers allowed argv unchanged to node', { skip: process.platform !== 'win32' }, async () => {
+  const args = [
+    "a'b",
+    'c d & e',
+    '$HOME',
+    'x|y',
+    'C:\\work dir\\sub',
+    'C:\\nodir\\',
+    'a\\b',
+    'semi;colon',
+    '`',
+    '@(x)',
+    'ไทย'
+  ]
+  const delivered = await deliveredArgv((script) =>
+    spawnSync(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        paneCommandText([process.execPath, script, ...args], 'powershell')
+      ],
+      { encoding: 'buffer' }
+    )
+  )
+  assert.deepEqual(delivered, args)
+  for (const arg of ['a"b', '', 'C:\\work dir\\']) {
+    assert.throws(
+      () => paneCommandText([process.execPath, 'argv.js', arg], 'powershell'),
+      /argument cannot be passed safely through PowerShell; no command sent/
     )
   }
 })
@@ -442,6 +554,27 @@ test('unsupported shells and unsafe cmd arguments send no command', async () => 
       name: 'cmd.exe',
       argv: ['echo', 'say "hi"'],
       pattern: /argument cannot be quoted safely for cmd.exe; no command sent/
+    },
+    {
+      name: 'cmd.exe',
+      argv: ['echo', '!PATH!'],
+      pattern: /argument cannot be quoted safely for cmd.exe; no command sent/
+    },
+    {
+      name: 'powershell.exe',
+      argv: ['echo', 'a"b'],
+      pattern: /argument cannot be passed safely through PowerShell; no command sent/
+    },
+    {
+      name: 'powershell.exe',
+      argv: ['echo', ''],
+      pattern: /Invalid or duplicate project action; expected id, title and bounded argv/,
+      catalog: true
+    },
+    {
+      name: 'pwsh.exe',
+      argv: ['echo', 'C:\\work dir\\'],
+      pattern: /argument cannot be passed safely through PowerShell; no command sent/
     }
   ]
   for (const item of rejected) {
@@ -455,7 +588,8 @@ test('unsupported shells and unsafe cmd arguments send no command', async () => 
       }),
       (error) => {
         assert.match(error.message, item.pattern)
-        assert.match(error.message, /tab w1:t2, pane w1:p2 retained/)
+        if (!item.catalog)
+          assert.match(error.message, /tab w1:t2, pane w1:p2 retained/)
         assert.equal(error.message.includes('\u0000'), false)
         const label = error.message.match(/Unsupported shell ([^;]*); no command sent/u)
         if (label) assert.ok(label[1].length <= 64)
@@ -463,6 +597,13 @@ test('unsupported shells and unsafe cmd arguments send no command', async () => 
       }
     )
     assert.equal(calls.some((args) => args[1] === 'run'), false)
+    if (item.catalog) {
+      assert.equal(calls.length, 0)
+      assert.throws(
+        () => paneCommandText(item.argv, 'powershell'),
+        /argument cannot be passed safely through PowerShell; no command sent/
+      )
+    }
   }
 })
 
