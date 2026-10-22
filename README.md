@@ -140,6 +140,12 @@ an action; commands still execute in new tabs, never in the popup or an existing
 agent pane. The opener freezes the original project/pane/workspace context so a
 popup without a pane ID cannot accidentally use the plugin's checkout.
 
+The picker keeps that project as its working directory and loads
+`bin/mahiro-herdr-actions.mjs` from `HERDR_PLUGIN_ROOT`. Text sent to the new
+tab follows that pane's shell process name: PowerShell, cmd, or a POSIX
+sh-family shell (`sh`, `bash`, `zsh`, `dash`, `ksh`). Any other shell fails
+closed and no command is sent.
+
 Mahiro's local binding is **Ctrl+B, then A** (`prefix+a`). It was explicitly
 approved and applied with config/snapshot backups and validated reload. It is
 not installed automatically for other users. The standalone picker was accepted

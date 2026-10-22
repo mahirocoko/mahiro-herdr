@@ -137,11 +137,30 @@ export const callerProject = async (env, call, root = projectRoot) => {
 export const commandText = (argv) =>
   argv.map((arg) => `'${arg.replaceAll("'", "'\\''")}'`).join(' ')
 
-const quoteCmd = (arg) => (arg.length === 0 ? '""' : `"${arg.replaceAll('"', '""')}"`)
+const quoteCmd = (arg) => {
+  if (arg.includes('%') || arg.includes('"'))
+    throw new Error('argument cannot be quoted safely for cmd.exe; no command sent')
+  return arg.length === 0 ? '""' : `"${arg}"`
+}
 
 const quotePowerShell = (arg) => `'${arg.replaceAll("'", "''")}'`
 
-export const paneCommandText = (argv, shell = process.platform === 'win32' ? 'powershell' : 'posix') => {
+const paneShellKind = (name) => {
+  const parts = (typeof name === 'string' ? name : '').split(/[\\/]/u)
+  const leaf = parts[parts.length - 1] || ''
+  const label = Array.from(
+    leaf.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/gu, '')
+  )
+    .slice(0, 64)
+    .join('')
+  const stem = label.replace(/\.exe$/iu, '').toLowerCase()
+  if (stem === 'pwsh' || stem === 'powershell') return 'powershell'
+  if (stem === 'cmd') return 'cmd'
+  if (['sh', 'bash', 'zsh', 'dash', 'ksh'].includes(stem)) return 'posix'
+  throw new Error(`Unsupported shell ${label || '(missing)'}; no command sent`)
+}
+
+export const paneCommandText = (argv, shell) => {
   if (shell === 'posix') return commandText(argv)
   if (shell === 'cmd') return argv.map(quoteCmd).join(' ')
   if (shell === 'powershell') return `& ${argv.map(quotePowerShell).join(' ')}`
@@ -238,6 +257,7 @@ export const launchProjectAction = async (
   const sleep = options.sleep || delay
   const deadline = clock() + 8000
   try {
+    let shellName
     while (true) {
       const pane = call(['pane', 'get', paneId]).pane
       if (
@@ -257,11 +277,18 @@ export const launchProjectAction = async (
         info.shell_pid > 0 &&
         info.foreground_processes?.length === 1 &&
         info.foreground_processes[0].pid === info.shell_pid
-      )
+      ) {
+        shellName = info.foreground_processes[0].name
         break
+      }
       await sleep(100)
     }
-    call(['pane', 'run', paneId, paneCommandText(action.argv)])
+    call([
+      'pane',
+      'run',
+      paneId,
+      paneCommandText(action.argv, paneShellKind(shellName))
+    ])
     if (options.focus !== false) call(['tab', 'focus', tabId])
   } catch (error) {
     throw new Error(

@@ -65,8 +65,12 @@ satisfy this outcome. The opt-in prototype is `src/project-actions.mjs` plus
 `bin/mahiro-herdr-actions.mjs`, with a project-owned `.herdr-actions.json` catalog
 and a plain terminal picker. It uses `tab create`, validates the returned new
 pane and its shell process, submits once with `pane run`, then focuses the tab.
-The manifest now declares `project-actions` and the `project-actions-picker`
-popup entrypoint. This is a native plugin action/terminal surface, not a new
+Command syntax follows that pane's shell process name: PowerShell (`powershell`
+or `pwsh`), `cmd`, or a POSIX sh-family shell (`sh`, `bash`, `zsh`, `dash`,
+`ksh`). Any other shell fails closed and no command is sent. The manifest
+declares `project-actions` and the `project-actions-picker` popup entrypoint.
+The picker keeps the project cwd and bootstraps its script from
+`HERDR_PLUGIN_ROOT`. This is a native plugin action/terminal surface, not a new
 non-terminal widget or dynamic workspace menu API. The opener passes frozen
 original project/workspace/pane context; the popup does not have its own pane ID.
 Mahiro accepted the standalone picker and approved the local `prefix+a` binding.

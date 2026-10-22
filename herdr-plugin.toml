@@ -20,7 +20,7 @@ title = "Project quick actions"
 placement = "popup"
 width = "80%"
 height = 16
-command = ["node", "bin/mahiro-herdr-actions.mjs"]
+command = ["node", "-e", "import(require('node:url').pathToFileURL(require('node:path').join(process.env.HERDR_PLUGIN_ROOT, 'bin', 'mahiro-herdr-actions.mjs')))"]
 
 [[actions]]
 id = "refresh"
