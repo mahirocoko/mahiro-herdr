@@ -13,6 +13,22 @@ export { FONT_GLYPHS } from './agent-icons.mjs'
 const idValid = value => typeof value === 'string' && /^[\w:-]{1,128}$/u.test(value)
 const identity = pane => JSON.stringify([pane.terminal_id, pane.agent, pane.agent_session?.value, pane.tokens?.letta_started_at])
 
+const workerCount = value => {
+  if (typeof value !== 'string' || !/^(?:0|[1-9][0-9]{0,2})$/u.test(value)) return null
+  const count = Number(value)
+  return count <= 256 && String(count) === value ? count : null
+}
+
+const hasPiWorkers = pane => {
+  const tokens = pane.tokens
+  if (pane.agent !== 'pi' || tokens?.mahiro_pi_workers_schema !== '1') return false
+  const owner = tokens.mahiro_pi_workers_owner
+  if (typeof owner !== 'string' || owner.length !== 36 || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(owner)) return false
+  const running = workerCount(tokens.mahiro_pi_workers_running)
+  const queued = workerCount(tokens.mahiro_pi_workers_queued)
+  return running !== null && queued !== null && running + queued > 0 && running + queued <= 256
+}
+
 export const herdrApiEndpoint = value => {
   if (process.platform !== 'win32') return value
   if (typeof value !== 'string' || value.length === 0) throw new Error('Herdr socket path unavailable')
@@ -82,8 +98,10 @@ export const rendererFrame = (snapshot, previous = {}, { step = 0, font = false 
       (old && Number.isSafeInteger(pane.completion_seq) && pane.completion_seq > (old.completionSeq ?? -1))
     let heldDone = Boolean(old?.heldDone || completed)
     if (status === 'working' || status === 'blocked' || status === 'unknown' || pane.focused || snapshot.focused_pane_id === pane.pane_id) heldDone = false
-    const display = heldDone ? 'done' : status === 'done' ? 'idle' : status
+    let display = heldDone ? 'done' : status === 'done' ? 'idle' : status
     states[pane.pane_id] = { identity: key, status, heldDone, completionSeq: pane.completion_seq ?? old?.completionSeq ?? null }
+    // Current native inventory handles token TTL. Workers affect pixels, never raw Done state.
+    if ((status === 'idle' || status === 'done') && hasPiWorkers(pane)) display = 'working'
     const ws = workspaces.get(pane.workspace_id)
     if (!ws) throw new Error('renderer pane has no matching workspace')
     const name = sanitizeToken(pane.display_agent || pane.agent || 'Agent').slice(0, 48)
